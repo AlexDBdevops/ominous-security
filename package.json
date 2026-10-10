@@ -1,0 +1,31 @@
+{
+  "name": "ominous-security",
+  "version": "1.0.0",
+  "description": "Analiza repositorios de GitHub antes de clonarlos: vulnerabilidades, amenazas deliberadas y payloads ocultos.",
+  "main": "server.js",
+  "bin": {
+    "ominous-scan": "bin/ominous-scan.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "lint": "node scripts/lint.js",
+    "test": "node --test test/*.test.js",
+    "test:ci": "node --test --experimental-test-coverage --test-coverage-include=lib/** --test-coverage-include=bin/** --test-coverage-include=server.js --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=junit.xml test/*.test.js",
+    "scan:self": "node bin/ominous-scan.js . --exclude lib/rules.js,lib/decoder.js,lib/extra.js,public/index.html,README.md,test/,node_modules/ --fail-on red",
+    "build:pages": "node scripts/build-pages.js site"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "server.js",
+    "lib/",
+    "bin/",
+    "public/",
+    "README.md"
+  ],
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "0.128.0"
+  },
+  "license": "MIT"
+}

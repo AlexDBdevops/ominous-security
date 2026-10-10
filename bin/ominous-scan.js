@@ -1,0 +1,76 @@
+#!/usr/bin/env node
+'use strict';
+// Escaneo por línea de comandos de una carpeta local (pensado para CI).
+// Uso: node bin/ominous-scan.js <carpeta> [--exclude a,b/] [--fail-on red|yellow|never]
+//                                         [--json informe.json] [--codequality gl-code-quality-report.json]
+// Código de salida: 0 si el veredicto no alcanza --fail-on, 1 si lo alcanza, 2 si hay un error.
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { analyzeTree } = require('../lib/analyzer');
+
+const USAGE = 'Uso: ominous-scan <carpeta> [--exclude a,b/] [--fail-on red|yellow|never] [--json fichero] [--codequality fichero]';
+// Severidades de Code Quality de GitLab: info, minor, major, critical, blocker
+const CQ_SEVERITY = { info: 'info', low: 'minor', medium: 'major', high: 'critical', critical: 'blocker' };
+
+function parseArgs(argv) {
+  const opts = { dir: null, exclude: [], failOn: 'red', json: null, codequality: null };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    const val = () => { if (i + 1 >= argv.length) throw new Error(`Falta el valor de ${a}`); return argv[++i]; };
+    if (a === '--exclude') opts.exclude.push(...val().split(',').map((s) => s.trim()).filter(Boolean));
+    else if (a === '--fail-on') opts.failOn = val();
+    else if (a === '--json') opts.json = val();
+    else if (a === '--codequality') opts.codequality = val();
+    else if (a === '-h' || a === '--help') opts.help = true;
+    else if (a.startsWith('-')) throw new Error(`Opción desconocida: ${a}`);
+    else if (!opts.dir) opts.dir = a;
+    else throw new Error(`Argumento de más: ${a}`);
+  }
+  if (!['red', 'yellow', 'never'].includes(opts.failOn)) throw new Error('--fail-on debe ser red, yellow o never');
+  return opts;
+}
+
+function toCodeQuality(result) {
+  return [...result.vulnerabilities, ...result.threats].map((f) => ({
+    description: `${f.kind === 'threat' ? 'Amenaza' : 'Vulnerabilidad'}: ${f.title}`,
+    check_name: `ominous/${f.rule}`,
+    fingerprint: crypto.createHash('sha256').update(`${f.rule}|${f.file || ''}|${f.line || 0}|${f.snippet || ''}`).digest('hex'),
+    severity: CQ_SEVERITY[f.severity] || 'info',
+    location: { path: f.file || '.', lines: { begin: f.line || 1 } },
+  }));
+}
+
+function shouldFail(overall, failOn) {
+  if (failOn === 'never') return false;
+  if (failOn === 'yellow') return overall !== 'green';
+  return overall === 'red';
+}
+
+async function main(argv = process.argv.slice(2)) {
+  const opts = parseArgs(argv);
+  if (opts.help || !opts.dir) { console.log(USAGE); return opts.help ? 0 : 2; }
+  const root = path.resolve(opts.dir);
+  if (!fs.statSync(root).isDirectory()) throw new Error(`${root} no es una carpeta`);
+
+  const result = await analyzeTree(root, {}, () => {}, { exclude: opts.exclude });
+  const { summary } = result;
+
+  for (const f of [...result.threats, ...result.vulnerabilities]) {
+    if (f.severity === 'info') continue;
+    const where = f.file ? `${f.file}${f.line ? `:${f.line}` : ''}` : '';
+    console.log(`[${f.severity.toUpperCase()}] ${f.kind === 'threat' ? 'amenaza' : 'vuln'} ${f.rule} ${where} ${f.title}`);
+  }
+  console.log(`\nVeredicto: ${summary.overall} (vulnerabilidades ${summary.vulnStatus}, amenazas ${summary.threatStatus}); ${result.stats.files} ficheros, ${result.vulnerabilities.length} vulnerabilidades, ${result.threats.length} amenazas`);
+
+  if (opts.json) fs.writeFileSync(opts.json, JSON.stringify(result, null, 2));
+  if (opts.codequality) fs.writeFileSync(opts.codequality, JSON.stringify(toCodeQuality(result), null, 2));
+  return shouldFail(summary.overall, opts.failOn) ? 1 : 0;
+}
+
+if (require.main === module) {
+  main().then((code) => process.exit(code)).catch((e) => { console.error(`Error: ${e.message}`); process.exit(2); });
+}
+
+module.exports = { main, parseArgs, toCodeQuality, shouldFail };

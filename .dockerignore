@@ -1,0 +1,9 @@
+.git
+node_modules
+test
+scripts
+site
+coverage
+junit.xml
+*.zip
+.gitlab-ci.yml
