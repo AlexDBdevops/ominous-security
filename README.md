@@ -40,7 +40,7 @@ Pega la URL del repo (`https://github.com/usuario/repo`, también vale con `/tre
 
 ## Configuración
 
-Todo se configura con variables de entorno. Con Docker, ponlas en un fichero `.env` (por ejemplo `ANTHROPIC_API_KEY=…` para la revisión con IA) junto a `compose.yaml` (Compose lo lee solo y está en `.gitignore`) o expórtalas antes de lanzar el script.
+Todo se configura con variables de entorno. Con Docker, ponlas en un fichero `.env` (por ejemplo `OMINOUS_PORT=9090`) junto a `compose.yaml` (Compose lo lee solo y está en `.gitignore`) o expórtalas antes de lanzar el script.
 
 ### Variables del script y de Docker Compose
 
@@ -58,8 +58,12 @@ Todo se configura con variables de entorno. Con Docker, ponlas en un fichero `.e
 | `HOST` | `127.0.0.1` | Interfaz de red. En el contenedor es `0.0.0.0`, y Docker solo publica el puerto en `127.0.0.1` |
 | `CLONE_DIR` | `~/ominous-clones` | Carpeta de clones. Los clones solo pueden ir dentro de ella |
 | `GITHUB_TOKEN` | — | Token de GitHub de solo lectura. Sube el límite de la API de 60 a 5000 peticiones por hora (metadatos, releases y reputación del autor) |
-| `ANTHROPIC_API_KEY` | — | Activa la revisión con IA y el resumen por IA del diff. Sin ella se genera un resumen local y la revisión con IA queda desactivada |
-| `OMINOUS_MODEL` | `claude-opus-5-5` | Modelo de Claude |
+| `ANTHROPIC_API_KEY` | — | Opcional. Clave de la API para la revisión con IA y el resumen del diff. También se puede escribir en la ventana **Conectar Claude** o usar tu cuenta con Claude Code (ver [Conectar Claude](#conectar-claude)) |
+| `OMINOUS_AI_METHOD` | — | `claude-code` para arrancar ya conectado con tu cuenta a través de Claude Code. Si no, se usa la clave si existe |
+| `OMINOUS_CLAUDE_BIN` | `claude` | Ruta del ejecutable de Claude Code |
+| `OMINOUS_CLAUDE_MODEL` | el de Claude Code | Modelo para la revisión con Claude Code (`sonnet`, `opus`…) |
+| `OMINOUS_CLAUDE_TIMEOUT` | `600000` | Tiempo máximo de una revisión con Claude Code, en ms |
+| `OMINOUS_MODEL` | `claude-opus-5-5` | Modelo de Claude con clave de la API |
 | `OMINOUS_AI_EFFORT` | `high` | Esfuerzo de la revisión con IA (`low`, `medium`, `high`, `xhigh`, `max`): más alto, más profunda y más cara |
 | `OMINOUS_AI_MAX_CHARS` | `160000` | Máximo de caracteres del repo que se envían a Claude por revisión |
 | `ALLOWED_HOSTS` | — | Nombres extra con los que se puede abrir la app (`miservidor:8080,192.168.1.20:8080`). Si alguno no es de esta máquina, `OMINOUS_TOKEN` pasa a ser obligatorio |
@@ -159,18 +163,33 @@ El repo se descarga en una carpeta temporal con git endurecido (sin hooks, sin s
 
 **Ingeniería inversa de scripts ocultos.** Pela capas de base64, hex, zlib/gzip/deflate, `String.fromCharCode`, cadenas invertidas, XOR de un byte (por fuerza bruta) y **Fernet (AES) cuando la clave está en el repo**, y vuelve a analizar el resultado. Si la clave no está en el repo, lo marca como no descifrable.
 
-**Revisión con IA (opcional).** Las reglas encuentran patrones conocidos; con el botón **Revisar con Claude** se envían a la API de Anthropic los ficheros de más riesgo (los que se ejecutan al instalar o abrir el proyecto, los que tienen avisos, los puntos de entrada y el código descifrado, hasta 40 ficheros y `OMINOUS_AI_MAX_CHARS` caracteres) junto con el árbol de ficheros y los hallazgos de las reglas. Claude busca lo que no tiene firma (lógica maliciosa nueva, técnicas para esquivar sandboxes, fallos de autorización, código que no encaja con lo que el proyecto dice ser) y señala posibles falsos positivos. Reglas de seguridad de esta función:
+**Revisión con IA (opcional).** Las reglas encuentran patrones conocidos; con Claude conectado (ver [Conectar Claude](#conectar-claude)) y el botón **Revisar con Claude** se envían a Claude los ficheros de más riesgo (los que se ejecutan al instalar o abrir el proyecto, los que tienen avisos, los puntos de entrada y el código descifrado, hasta 40 ficheros y `OMINOUS_AI_MAX_CHARS` caracteres) junto con el árbol de ficheros y los hallazgos de las reglas. Claude busca lo que no tiene firma (lógica maliciosa nueva, técnicas para esquivar sandboxes, fallos de autorización, código que no encaja con lo que el proyecto dice ser) y señala posibles falsos positivos. Reglas de seguridad de esta función:
 
 - Solo se envía algo si pulsas el botón, y la app te dice antes cuántos ficheros y cuánto texto.
 - El contenido del repo va marcado como datos no fiables: si contiene instrucciones dirigidas a la IA, eso se reporta como amenaza.
 - La IA **solo puede añadir avisos**. Sus "falsos positivos" se muestran como opinión y nunca rebajan el veredicto; si encuentra algo grave, clonar exige la casilla de confirmación aunque las reglas den verde (también lo comprueba el servidor).
 - La respuesta se valida contra un esquema JSON estricto antes de mostrarse.
 
-Una revisión grande envía unos 50.000 tokens; con `claude-opus-5-5` a esfuerzo `high` cuesta del orden de 0,20 a 0,50 USD (estimación). Baja `OMINOUS_AI_EFFORT` u `OMINOUS_AI_MAX_CHARS` para abaratarla.
+### Conectar Claude
+
+El botón **Conectar Claude** de la cabecera abre una ventana para elegir con qué cuenta se hace la revisión. Al conectar, la app comprueba la conexión y muestra una marca verde con el método, el tipo de cuenta y la hora de la comprobación. El botón de la cabecera pasa a **Claude conectado**.
+
+| Opción | Coste | Cómo funciona |
+|---|---|---|
+| **Mi cuenta de Claude (Pro o Max)** | Sin coste extra: gasta el uso de tu plan | Usa el Claude Code instalado en el equipo donde corre la app, con tu sesión iniciada (`claude` una vez para iniciar sesión). La app nunca lee tus credenciales: ejecuta `claude -p` sin herramientas (`--tools ""`), sin MCP, en modo seguro (sin CLAUDE.md, hooks ni plugins), sin guardar la sesión, en una carpeta vacía y sin `ANTHROPIC_API_KEY` en su entorno. El contenido del repo entra por la entrada estándar, nunca como argumento. No está disponible dentro de Docker; usa `scripts/local.sh node` |
+| **Clave de la API de Anthropic** | Pago por uso, aparte de Pro o Max | Una suscripción Pro no paga la API: la clave se factura en console.anthropic.com. Una revisión grande envía unos 50.000 tokens; con `claude-opus-5-5` a esfuerzo `high` cuesta del orden de 0,20 a 0,50 USD (estimación). Baja `OMINOUS_AI_EFFORT` u `OMINOUS_AI_MAX_CHARS` para abaratarla. La clave puede venir de `ANTHROPIC_API_KEY` o escribirse en la ventana |
+| **Tu cuenta de claude.ai** (solo la demo) | Sin coste extra | Al abrir la demo como artefacto en claude.ai, Claude revisa de verdad los hallazgos simulados del ejemplo con la cuenta de quien la abre, tras pedir permiso |
+
+Seguridad de la ventana:
+
+- La clave escrita en la ventana vive solo en la memoria del servidor: no se guarda en disco, no se escribe en el log y nunca se devuelve al navegador (solo sus primeros y últimos caracteres).
+- Si la app está expuesta a la red, la clave solo se acepta a través de HTTPS (cabecera `X-Forwarded-Proto: https` del proxy); en otro caso, usa `ANTHROPIC_API_KEY`.
+- La ventana usa el mismo token, la misma protección CSRF y el mismo límite de peticiones que el resto de la API.
+- Comprobar una clave consulta el modelo en la API y no gasta tokens. Comprobar Claude Code ejecuta `claude --version` y `claude auth status`, que no gastan uso.
 
 **Cobertura.** Cada análisis muestra qué se ha revisado por completo, qué parcialmente y qué no.
 
-**Clonar.** El botón está al final. Si el resultado no está en verde exige marcar la casilla de confirmación, y el servidor también lo comprueba. El clon se fija al commit exacto que se analizó. Si aplicas arreglos verás el diff y un resumen de cada cambio, por qué es más seguro y qué podría romper, y podrás deshacerlos con un botón. El resumen lo escribe Claude si hay `ANTHROPIC_API_KEY`; en ese caso, y solo en ese, el diff se envía a la API de Anthropic.
+**Clonar.** El botón está al final. Si el resultado no está en verde exige marcar la casilla de confirmación, y el servidor también lo comprueba. El clon se fija al commit exacto que se analizó. Si aplicas arreglos verás el diff y un resumen de cada cambio, por qué es más seguro y qué podría romper, y podrás deshacerlos con un botón. El resumen lo escribe Claude si está conectado; en ese caso, y solo en ese, el diff se envía a Claude.
 
 ## Seguridad de la propia herramienta
 
@@ -242,6 +261,9 @@ Al autoescanearse se excluyen `lib/rules.js`, `lib/decoder.js`, `lib/extra.js`, 
 | `El destino tiene que estar dentro de…` | El campo de destino admite solo un nombre de carpeta, dentro de `CLONE_DIR` |
 | Reputación, Releases o Scorecard en gris | La API de GitHub ha alcanzado el límite (define `GITHUB_TOKEN`) o el proyecto no tiene Scorecard publicado |
 | `Dependencias (OSV.dev): no se pudo consultar` | Sin conexión con api.osv.dev o `OMINOUS_OFFLINE=1` |
+| `No se encuentra Claude Code` al conectar | Instálalo en el mismo equipo que la app (`npm install -g @anthropic-ai/claude-code`) o indica la ruta con `OMINOUS_CLAUDE_BIN`. Dentro de Docker no está disponible |
+| `Claude Code está instalado pero sin sesión` | Ejecuta `claude` en una terminal e inicia sesión con tu cuenta Pro o Max |
+| `la clave solo se puede escribir desde este mismo equipo o a través de HTTPS` | La app está expuesta sin HTTPS. Pon la clave en `ANTHROPIC_API_KEY` o publica la app detrás de un proxy con TLS |
 | El puerto 8080 está ocupado | `OMINOUS_PORT=9090 scripts/local.sh` |
 
 ## Límites
@@ -261,6 +283,7 @@ lib/extra.js         autoejecutables, agentes de IA, lockfiles, señuelos, ZIP, 
 lib/history.js       historial de git
 lib/summary.js       resumen del diff de los arreglos (Claude o local)
 lib/ai.js            revisión con IA: selección de ficheros, prompt, esquema y validación
+lib/connection.js    conexión con Claude: clave de la API o Claude Code con tu cuenta
 lib/worker.js        hilo de análisis con tiempo máximo
 public/index.html    interfaz (sin servidor funciona en modo demo)
 Dockerfile           imagen (usuario sin privilegios, tini, healthcheck)

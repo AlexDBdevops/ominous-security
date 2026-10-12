@@ -55,6 +55,18 @@ test('servidor HTTP', async (t) => {
     const r = await req('GET', '/api/health', host);
     assert.equal(r.status, 200);
   });
+  await t.test('la conexión con Claude se consulta y se valida sin exponer claves', async () => {
+    const g = await req('GET', '/api/ai-connection', host);
+    assert.equal(g.status, 200);
+    assert.ok(!/sk-ant-[A-Za-z0-9_-]{20}/.test(g.body));
+    const json = { ...host, 'content-type': 'application/json' };
+    const bad = await req('POST', '/api/ai-connection', json, JSON.stringify({ method: 'shell' }));
+    assert.equal(bad.status, 400);
+    const badKey = await req('POST', '/api/ai-connection', json, JSON.stringify({ method: 'api', key: 'no-es-una-clave' }));
+    assert.equal(badKey.status, 400);
+    const cross = await req('POST', '/api/ai-connection', { ...json, origin: 'https://evil.example' }, JSON.stringify({ method: 'none' }));
+    assert.equal(cross.status, 403);
+  });
   await t.test('sirve la interfaz con cabeceras de seguridad', async () => {
     const r = await req('GET', '/', host);
     assert.equal(r.status, 200);

@@ -15,6 +15,7 @@ const { summarizeDiff } = require('./lib/summary');
 const { scanHistory } = require('./lib/history');
 const { parseGitmodules } = require('./lib/extra');
 const ai = require('./lib/ai');
+const conn = require('./lib/connection');
 const HISTORY_COMMITS = Number(process.env.HISTORY_COMMITS) || 300;
 const MAX_SUBMODULES = 8;
 const ANALYSIS_TIMEOUT = Number(process.env.ANALYSIS_TIMEOUT_MS) || 5 * 60 * 1000;
@@ -365,7 +366,7 @@ const server = http.createServer(async (req, res) => {
   }
   // La comprobación de salud no exige token (la usan Docker y los scripts), pero sin él no da detalles.
   if (req.method === 'GET' && url.pathname === '/api/health') {
-    return send(res, 200, { ok: true, mode: 'live', ...(tokenOk(req) ? { cloneDir: EXPOSED ? path.basename(CLONE_DIR) : CLONE_DIR, ai: ai.available() } : {}) });
+    return send(res, 200, { ok: true, mode: 'live', ...(tokenOk(req) ? { cloneDir: EXPOSED ? path.basename(CLONE_DIR) : CLONE_DIR, ai: ai.available(), aiConnection: conn.status() } : {}) });
   }
   if (!tokenOk(req)) {
     if (req.method === 'GET' && url.pathname === '/') return send(res, 401, '<!doctype html><meta charset="utf-8"><title>Ominous Security</title><p>Acceso protegido. Abre la URL con <code>?token=TU_TOKEN</code>.</p>', 'text/html; charset=utf-8');
@@ -398,6 +399,17 @@ const server = http.createServer(async (req, res) => {
       if (rateLimited(req.socket.remoteAddress)) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
       console.log('→ Revisión con IA');
       return send(res, 200, await reviewWithAi(body));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/ai-connection') return send(res, 200, conn.status());
+    if (req.method === 'POST' && url.pathname === '/api/ai-connection') {
+      if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
+      const body = await readJson(req);
+      if (rateLimited(req.socket.remoteAddress)) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
+      // La clave solo viaja desde este equipo o por HTTPS (detrás de un proxy con TLS).
+      const secureChannel = !EXPOSED || req.headers['x-forwarded-proto'] === 'https';
+      const r = body.verify ? await conn.verify() : await conn.configure(body, { secureChannel });
+      console.log(`→ Conexión con Claude: ${r.method || 'ninguna'} ${r.connected ? '✓' : '✗'}`);
+      return send(res, 200, r);
     }
     if (req.method === 'POST' && url.pathname === '/api/revert') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
