@@ -73,6 +73,7 @@ function closeSync(fd) { fds.delete(fd); }
 function readlinkSync(p) { const f = files.get(p); if (!f || !f.link) throw enoent(p); return f.link; }
 function existsSync(p) { try { stats(p, true); return true; } catch { return false; } }
 function realpathSync(p) { return resolveLink(p); }
+realpathSync.native = realpathSync;
 
 module.exports = {
   readdirSync, readFileSync, writeFileSync, openSync, readSync, closeSync, readlinkSync, existsSync, realpathSync,

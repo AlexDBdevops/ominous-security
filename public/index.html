@@ -1082,6 +1082,8 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     const btn = $('#aiBtn');
     btn.disabled = true;
     btn.textContent = 'Claude está revisando…';
+    current.aiPending = true; // no se clona sin confirmación hasta conocer su opinión
+    syncCloneBtn();
     $('#aiSend').textContent = 'Puede tardar un par de minutos.';
     try {
       let r;
@@ -1099,9 +1101,12 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         r.raises = r.verdict === 'malicioso' || r.findings.some((f) => ['high', 'critical'].includes(f.severity));
       }
       current.aiReview = r;
+      current.aiPending = false;
       showAiResult(r);
       renderClone();
     } catch (e) {
+      current.aiPending = false;
+      syncCloneBtn();
       const out = $('#aiOut');
       out.className = 'err';
       out.textContent = e.code ? sampleError(e) : e.message;
@@ -1140,7 +1145,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   }
   function syncCloneBtn() {
     const risky = current && (current.summary.overall !== 'green' || !!(current.aiReview && current.aiReview.raises));
-    $('#cloneBtn').disabled = !current || (risky && !$('#ackChk').checked);
+    $('#cloneBtn').disabled = !current || !!current.aiPending || (risky && !$('#ackChk').checked);
   }
   $('#ackChk').addEventListener('change', syncCloneBtn);
 

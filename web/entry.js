@@ -59,6 +59,7 @@ function patch(findings) {
 
 // Los arreglos sustituyen líneas sin añadir ni quitar ninguna: basta comparar línea a línea.
 function fileDiff(rel, oldText, newText) {
+  if (/[\u0000-\u001f\u007f"\\]/.test(rel)) return ''; // git entrecomilla estas rutas: mejor no incluirlas
   const eol = oldText.endsWith('\n');
   const lines = (t) => { const l = t.split('\n'); if (t.endsWith('\n')) l.pop(); return l; };
   const a = lines(oldText);

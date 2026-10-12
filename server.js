@@ -24,6 +24,26 @@ const MAX_SUBMODULES = 8;
 const ANALYSIS_TIMEOUT = Number(process.env.ANALYSIS_TIMEOUT_MS) || 5 * 60 * 1000;
 const WATCH = process.env.OMINOUS_WATCH !== '0';
 const WATCH_HOURS = Number(process.env.OMINOUS_WATCH_HOURS) || 24;
+// Tiempo total para las fases previas al análisis (historial, submódulos, herramientas
+// externas). Pasado este tiempo se saltan, y la cobertura lo dice.
+const PREP_BUDGET = Number(process.env.OMINOUS_PREP_BUDGET_MS) || 12 * 60 * 1000;
+
+// Versiones de git con los fallos de clonado de 2025 corregidos (CVE-2025-48384 y otros):
+// 2.43.7, 2.44.4, 2.45.4, 2.46.4, 2.47.3, 2.48.2, 2.49.1 y 2.50.1 en adelante.
+const GIT_FIXED = { 43: 7, 44: 4, 45: 4, 46: 4, 47: 3, 48: 2, 49: 1, 50: 1 };
+let gitVersion = null;
+function gitPatched(v) {
+  const m = String(v).match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return null;
+  const [maj, min, patch] = m.slice(1).map(Number);
+  if (maj !== 2) return maj > 2;
+  if (min > 50) return true;
+  if (min < 43) return false;
+  return patch >= GIT_FIXED[min];
+}
+function gitVersionCoverage(extra) {
+  if (gitVersion && gitPatched(gitVersion) === false) extra.coverage.push({ label: 'Tu versión de git', status: 'partial', detail: `${gitVersion} tiene fallos conocidos que ejecutan código al clonar con submódulos (CVE-2025-48384). La herramienta clona sin submódulos, pero actualiza git antes de usar --recursive.` });
+}
 
 // Análisis en un hilo aparte con tiempo máximo.
 function runAnalysis(root, meta, log, extra) {
@@ -125,11 +145,17 @@ async function analyze(url) {
     const extra = { vulns: [], threats: [], coverage: [], ref: { owner: ref.owner, repo: ref.repo, commit } };
     movedPass(ref, meta, extra);
     scorecardCoverage(meta, extra);
-    await historyPass(dir, extra, log);
-    await submodulePass(fs.realpathSync(dir), tmp, ref, extra, log);
-    await externalPass(fs.realpathSync(dir), tmp, extra, log);
+    const deadline = Date.now() + PREP_BUDGET;
+    const timed = async (label, fn) => {
+      if (Date.now() > deadline) { extra.coverage.push({ label, status: 'skip', detail: 'saltado: el análisis llevaba demasiado tiempo (OMINOUS_PREP_BUDGET_MS)' }); return; }
+      await fn();
+    };
+    gitVersionCoverage(extra);
+    await timed('Historial de git', () => historyPass(dir, extra, log));
+    await timed('Submódulos', () => submodulePass(fs.realpathSync.native(dir), tmp, ref, extra, log, deadline));
+    await timed('Herramientas externas', () => externalPass(fs.realpathSync.native(dir), tmp, extra, log));
     releasePass(meta, extra);
-    const { aiContext, ...result } = await runAnalysis(fs.realpathSync(dir), meta, log, extra);
+    const { aiContext, ...result } = await runAnalysis(fs.realpathSync.native(dir), meta, log, extra);
     const id = crypto.randomUUID();
     const payload = {
       id, repo: { owner: ref.owner, name: ref.repo, branch, commit, url: `https://github.com/${ref.owner}/${ref.repo}`, meta }, ...result,
@@ -152,13 +178,13 @@ async function historyPass(dir, extra, log) {
   const h = await scanHistory(GIT_SAFE, dir, { commits: HISTORY_COMMITS, env: GIT_ENV });
   for (const f of h.findings) (f.kind === 'vuln' ? extra.vulns : extra.threats).push(f);
   extra.coverage.push({
-    label: 'Historial de git', status: !deepened || h.truncated || h.error ? 'partial' : 'ok',
-    detail: `${h.scanned} commit${h.scanned === 1 ? '' : 's'} revisado${h.scanned === 1 ? '' : 's'}${!deepened ? ' (no se pudo descargar más historial)' : ''}${h.truncated ? ' (límite de tamaño o tiempo alcanzado)' : ''}`,
+    label: 'Historial de git', status: !deepened || h.truncated || h.error || h.scanned >= HISTORY_COMMITS ? 'partial' : 'ok',
+    detail: `${h.scanned} commit${h.scanned === 1 ? '' : 's'} revisado${h.scanned === 1 ? '' : 's'}${!deepened ? ' (no se pudo descargar más historial)' : ''}${h.truncated ? ' (límite de tamaño o tiempo alcanzado)' : ''}${h.scanned >= HISTORY_COMMITS ? ` (hay más commits antiguos sin revisar; HISTORY_COMMITS=${HISTORY_COMMITS})` : ''}`,
   });
 }
 
 // Submódulos: comprueba a dónde apuntan y analiza los de GitHub en el commit exacto que fija el repo.
-async function submodulePass(root, tmp, ref, extra, log) {
+async function submodulePass(root, tmp, ref, extra, log, deadline = Infinity) {
   const subs = parseGitmodules(root);
   if (!subs.length) return;
   let analyzed = 0;
@@ -169,7 +195,7 @@ async function submodulePass(root, tmp, ref, extra, log) {
     if (bad) { extra.threats.push({ kind: 'threat', rule: 'submodule-url', severity: bad, title: `Submódulo con URL peligrosa: ${sm.path}`, description: `Apunta a ${url}. Las URL ext::, file:// o http:// permiten ejecutar comandos o suplantar el contenido.`, file: '.gitmodules', line: null }); continue; }
     const sub = parseGithubUrl(url.replace(/^git@github\.com:/, 'https://github.com/'));
     if (!sub) { extra.threats.push({ kind: 'threat', rule: 'submodule-external', severity: 'low', title: `Submódulo fuera de GitHub: ${sm.path}`, description: `Apunta a ${url}. No se ha analizado.`, file: '.gitmodules', line: null }); continue; }
-    if (analyzed >= MAX_SUBMODULES) continue;
+    if (analyzed >= MAX_SUBMODULES || Date.now() > deadline) continue;
     let sha = null;
     try { const ls = await git(['-C', root, 'ls-tree', 'HEAD', '--', sm.path]); sha = (ls.match(/^160000 commit ([0-9a-f]{40})/) || [])[1] || null; } catch { /* sin gitlink */ }
     const sdir = path.join(tmp, `sub${analyzed}`);
@@ -179,7 +205,7 @@ async function submodulePass(root, tmp, ref, extra, log) {
       await git(['-C', sdir, 'remote', 'add', 'origin', sub.cloneUrl]);
       await git(['-C', sdir, 'fetch', '--depth', '1', '--no-tags', 'origin', sha || 'HEAD'], { timeout: 120000 });
       await git(['-C', sdir, 'checkout', '-q', 'FETCH_HEAD']);
-      const r = await runAnalysis(fs.realpathSync(sdir), null, () => {}, {});
+      const r = await runAnalysis(fs.realpathSync.native(sdir), null, () => {}, {});
       const pre = (f) => ({ ...f, file: f.file ? `${sm.path}/${f.file}` : sm.path, title: `${f.title} [submódulo]` });
       extra.vulns.push(...r.vulnerabilities.map(pre));
       extra.threats.push(...r.threats.map(pre));
@@ -210,8 +236,8 @@ function resolveDest(dest, repoName) {
 
 function assertInsideCloneDir(dir) {
   if (ALLOW_ANY_DEST && !EXPOSED) return;
-  const base = fs.realpathSync(CLONE_DIR);
-  const real = fs.realpathSync(dir);
+  const base = fs.realpathSync.native(CLONE_DIR);
+  const real = fs.realpathSync.native(dir);
   if (real !== base && !real.startsWith(base + path.sep)) throw Object.assign(new Error('El destino sale de la carpeta de clones (enlace simbólico).'), { status: 400 });
 }
 
@@ -225,21 +251,28 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
       : 'El análisis no está en verde: marca la casilla de confirmación para clonar.'), { status: 409 });
   }
   const target = resolveDest(dest, a.ref.repo);
+  // .ominous guarda la lista de vigilancia: un repo con ese nombre podría escribirla.
+  if (path.relative(path.resolve(CLONE_DIR), target).split(path.sep)[0] === '.ominous') throw Object.assign(new Error('Ese nombre de carpeta está reservado. Elige otro destino.'), { status: 400 });
   if (fs.existsSync(target)) throw Object.assign(new Error(`La carpeta ya existe: ${target}`), { status: 409 });
+  // Se comprueba antes de crear nada: si no, un enlace dentro de otro clon crearía carpetas fuera.
+  fs.mkdirSync(CLONE_DIR, { recursive: true });
+  let existing = path.dirname(target);
+  while (!fs.existsSync(existing)) existing = path.dirname(existing);
+  assertInsideCloneDir(existing);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   assertInsideCloneDir(path.dirname(target));
-  const args = ['clone', '--no-recurse-submodules'];
+  // Solo la rama analizada y sin tocar el disco hasta fijar el commit analizado: así no llega
+  // a escribirse ni un fichero de otra rama o de un commit posterior al análisis.
+  const args = ['clone', '--no-recurse-submodules', '--single-branch', '--no-checkout', '--config', 'core.protectNTFS=true', '--config', 'core.protectHFS=true'];
   if (a.ref.branch) args.push('--branch', a.ref.branch);
   args.push('--', a.ref.cloneUrl, target);
   await git(args, { timeout: 600000 });
   const head = await git(['-C', target, 'rev-parse', 'HEAD']);
-  let pinned = false;
-  if (head !== a.commit) {
-    // El repo cambió después del análisis: dejamos el clon en el commit que se analizó.
-    await git(['-C', target, 'reset', '--hard', a.commit]);
-    pinned = true;
-  }
-  const fixes = applyFixes ? applyAutoFixes(fs.realpathSync(target), a.payload.vulnerabilities) : [];
+  const pinned = head !== a.commit;
+  const branchName = await git(['-C', target, 'symbolic-ref', '--short', 'HEAD']).catch(() => null);
+  if (pinned) await git(['-C', target, 'fetch', '--no-tags', 'origin', a.commit], { timeout: 600000 }).catch(() => {});
+  await git(['-C', target, 'checkout', '-q', ...(branchName ? ['-B', branchName] : ['--detach']), a.commit]);
+  const fixes = applyFixes ? applyAutoFixes(fs.realpathSync.native(target), a.payload.vulnerabilities) : [];
   let diff = '';
   let summary = null;
   if (fixes.length) {
@@ -250,7 +283,7 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
   if (WATCH) {
     try {
       const deps = [...a.payload.vulnerabilities, ...a.payload.threats].filter((f) => f.rule === 'dep-vuln' || f.rule === 'malicious-package');
-      watch.add({ owner: a.ref.owner, repo: a.ref.repo, commit: a.commit, dest: fs.realpathSync(target), findings: deps });
+      watch.add({ owner: a.ref.owner, repo: a.ref.repo, commit: a.commit, dest: fs.realpathSync.native(target), findings: deps });
     } catch (e) { console.error(`✗ vigilancia: ${e.message}`); }
   }
   return { path: target, commit: a.commit, pinnedToAnalyzedCommit: pinned, fixesApplied: fixes, diff: diff.slice(0, 400000), diffTruncated: diff.length > 400000, summary };
@@ -432,6 +465,10 @@ if (require.main === module) {
     console.log(`\n  Ominous Security escuchando en http://localhost:${PORT}`);
     console.log(`  Los clones se guardan en ${CLONE_DIR}\n`);
   });
+  git(['--version']).then((v) => {
+    gitVersion = v.replace(/^git version\s*/, '');
+    if (gitPatched(gitVersion) === false) console.warn(`  ⚠ git ${gitVersion} tiene fallos conocidos al clonar con submódulos (CVE-2025-48384): actualízalo.\n`);
+  }).catch(() => console.warn('  ⚠ No encuentro git: no se podrá analizar ni clonar.\n'));
   if (WATCH) {
     // Vigilancia de los clones: al poco de arrancar y luego cada WATCH_HOURS horas.
     const tick = () => watch.check((m) => console.log(`  ${m}`)).catch((e) => console.error(`✗ vigilancia: ${e.message}`));
@@ -440,4 +477,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseGithubUrl, resolveDest, server };
+module.exports = { parseGithubUrl, resolveDest, server, gitPatched };
