@@ -510,15 +510,15 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     panel.hidden = false;
     const unread = w.repos.reduce((n, r) => n + r.newAlerts, 0);
     $('#watchNote').textContent = w.repos.length
-      ? `Cada ${w.hours || 24} h se vuelven a consultar en OSV.dev las dependencias de los repos que has clonado, y aquí aparece cualquier vulnerabilidad publicada después del clon.${w.checkedAt ? ` Última comprobación: ${new Date(w.checkedAt).toLocaleString()}.` : ''}${unread ? ` ${unread} aviso${unread === 1 ? '' : 's'} nuevo${unread === 1 ? '' : 's'}.` : ''}`
+      ? `Cada ${w.hours || 24} h se vuelven a consultar en OSV.dev las dependencias de los repos que has clonado, y aquí aparece cualquier vulnerabilidad publicada después del clon.${w.checkedAt ? ` Última comprobación: ${new Date(w.checkedAt).toLocaleString('es-ES')}.` : ''}${unread ? ` ${unread} aviso${unread === 1 ? '' : 's'} nuevo${unread === 1 ? '' : 's'}.` : ''}`
       : 'Cuando clones un repo desde aquí, se vigilarán sus dependencias y te avisará de las vulnerabilidades que se publiquen después.';
     $('#watchList').replaceChildren(...w.repos.map((r) => el('li', {},
       el('div', { class: 'wrow' },
         el('strong', {}, r.repo),
         el('button', { class: 'forget', type: 'button', onclick: async () => { try { await watchCall('/api/watch/forget', { id: r.id }); loadWatch(); } catch (e) { $('#watchNote').textContent = e.message; } } }, 'Dejar de vigilar')),
-      el('div', { class: 'wmeta' }, el('code', {}, r.dest), ` · commit ${String(r.commit).slice(0, 10)} · ${r.checkedAt ? `comprobado ${new Date(r.checkedAt).toLocaleString()}` : WATCH_STATUS[r.status] || r.status}${r.detail ? ` · ${r.detail}` : ''}${WATCH_STATUS[r.status] && r.checkedAt ? ` · ${WATCH_STATUS[r.status]}` : ''}`),
+      el('div', { class: 'wmeta' }, el('code', {}, r.dest), ` · commit ${String(r.commit).slice(0, 10)} · ${r.checkedAt ? `comprobado ${new Date(r.checkedAt).toLocaleString('es-ES')}` : WATCH_STATUS[r.status] || r.status}${r.detail ? ` · ${r.detail}` : ''}${WATCH_STATUS[r.status] && r.checkedAt ? ` · ${WATCH_STATUS[r.status]}` : ''}`),
       ...(r.alerts.length ? r.alerts.slice(0, 8).map((a) => el('div', { class: `walert${a.read ? '' : ' unread'}` },
-        el('span', { class: `sev ${a.severity}` }, SEV[a.severity] || a.severity), ' ', a.kev ? 'Se está explotando · ' : '', extLink(`https://osv.dev/vulnerability/${encodeURIComponent(a.id)}`, el('code', {}, a.id)), ` ${a.title}${a.file ? ` (${a.file})` : ''} · ${new Date(a.at).toLocaleDateString()}`))
+        el('span', { class: `sev ${a.severity}` }, SEV[a.severity] || a.severity), ' ', a.kev ? 'Se está explotando · ' : '', extLink(`https://osv.dev/vulnerability/${encodeURIComponent(a.id)}`, el('code', {}, a.id)), ` ${a.title}${a.file ? ` (${a.file})` : ''} · ${new Date(a.at).toLocaleDateString('es-ES')}`))
         : [el('div', { class: 'wmeta' }, 'Sin avisos nuevos desde el clon.')]))));
     if (unread) watchCall('/api/watch/read', {}).catch(() => {});
   }
