@@ -1,0 +1,69 @@
+# Actualización semanal de los datos que envejecen:
+#   data/kev.json      vulnerabilidades que se están explotando (catálogo KEV de CISA)
+#   data/popular.json  paquetes más descargados de npm y PyPI (typosquatting)
+#
+# Si cambian, pasa lint y tests aquí mismo y abre un PR para revisarlo: nunca toca main
+# directamente. Solo se lanza por calendario o a mano, así que no puede encadenarse con
+# otros workflows. Hace falta activar, una vez, Settings > Actions > General >
+# "Allow GitHub Actions to create and approve pull requests".
+#
+# Las vulnerabilidades de las dependencias no necesitan esto: se consultan en OSV.dev en
+# cada análisis.
+
+name: Actualizar datos
+
+on:
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      OMINOUS_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run update:data
+      - name: ¿Han cambiado los datos?
+        id: diff
+        run: |
+          if git diff --quiet -- data; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; git diff --stat -- data; fi
+      # El analizador del navegador lleva los datos dentro: se regenera y se prueba todo.
+      - if: steps.diff.outputs.changed == 'true'
+        run: |
+          npm run build:web
+          npm run lint
+          npm test
+      - name: Abrir el PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          day=$(date -u +%Y-%m-%d)
+          branch="datos/$day"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git add data public/analyzer.js
+          git commit -m "Datos: catálogo KEV y paquetes populares ($day)"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
+          gh pr create --base main --head "$branch" \
+            --title "Datos: catálogo KEV y paquetes populares ($day)" \
+            --body "Actualización automática de \`data/kev.json\` y \`data/popular.json\` con \`npm run update:data\`. Lint y tests ya han pasado en el workflow *Actualizar datos*. Revisa el diff antes de fusionar."

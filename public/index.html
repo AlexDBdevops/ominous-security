@@ -159,6 +159,17 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
 
 .clone { display: grid; gap: 10px; border-top: 3px solid var(--accent); }
 .clone h2 { font-size: 18px; }
+.watch { display: flex; flex-direction: column; gap: 10px; }
+.watch-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+.watch h2 { font-size: 18px; }
+.watch .note { margin: 0; }
+.watch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.watch-list > li { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--panel-2); min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.watch-list .wrow { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; justify-content: space-between; }
+.watch-list .wmeta { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.watch-list .walert { font-size: 13px; overflow-wrap: anywhere; }
+.watch-list .walert.unread { font-weight: 600; }
+.watch-list .forget { background: none; border: 0; color: var(--muted); font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; }
 .clone-inner { display: grid; gap: 10px; }
 .clone .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .clone label.chk { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; cursor: pointer; }
@@ -392,6 +403,15 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       </section>
     </div>
   </div>
+
+  <section class="panel watch" id="watchPanel" hidden aria-labelledby="watchH">
+    <div class="watch-head">
+      <h2 id="watchH">Vigilancia de tus clones</h2>
+      <button class="btn sm ghost" id="watchBtn" type="button">Comprobar ahora</button>
+    </div>
+    <p class="note" id="watchNote"></p>
+    <ul class="watch-list" id="watchList"></ul>
+  </section>
 </div>
 
 <script src="analyzer.js"></script>
@@ -465,6 +485,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         $('#mode').className = 'mode live';
         $('#modeNote').textContent = `Los repos se descargan en una carpeta temporal y nunca se ejecuta nada de ellos. Los clones van a ${j.cloneDir}.`;
         $('#dest').placeholder = `Nombre de la carpeta en ${j.cloneDir} (por defecto, el del repo)`;
+        loadWatch();
         return;
       }
     } catch (e) { /* sin servidor: demo */ }
@@ -474,6 +495,44 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     $('#modeNote').textContent = 'Vista previa: sin el servidor local los resultados son simulados. Prueba los tres ejemplos para ver un repo limpio, uno vulnerable y uno malicioso.';
     addExamples();
   }
+
+  // ---------- Vigilancia de los clones (solo servidor local) ----------
+  const WATCH_STATUS = { pending: 'pendiente de comprobar', missing: 'la carpeta ya no existe', outside: 'fuera de la carpeta de clones', skip: 'sin comprobar' };
+  async function watchCall(path, body) {
+    const res = await fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {});
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || 'Error');
+    return j;
+  }
+  function renderWatch(w) {
+    const panel = $('#watchPanel');
+    if (!w || w.enabled === false) { panel.hidden = true; return; }
+    panel.hidden = false;
+    const unread = w.repos.reduce((n, r) => n + r.newAlerts, 0);
+    $('#watchNote').textContent = w.repos.length
+      ? `Cada ${w.hours || 24} h se vuelven a consultar en OSV.dev las dependencias de los repos que has clonado, y aquí aparece cualquier vulnerabilidad publicada después del clon.${w.checkedAt ? ` Última comprobación: ${new Date(w.checkedAt).toLocaleString()}.` : ''}${unread ? ` ${unread} aviso${unread === 1 ? '' : 's'} nuevo${unread === 1 ? '' : 's'}.` : ''}`
+      : 'Cuando clones un repo desde aquí, se vigilarán sus dependencias y te avisará de las vulnerabilidades que se publiquen después.';
+    $('#watchList').replaceChildren(...w.repos.map((r) => el('li', {},
+      el('div', { class: 'wrow' },
+        el('strong', {}, r.repo),
+        el('button', { class: 'forget', type: 'button', onclick: async () => { try { await watchCall('/api/watch/forget', { id: r.id }); loadWatch(); } catch (e) { $('#watchNote').textContent = e.message; } } }, 'Dejar de vigilar')),
+      el('div', { class: 'wmeta' }, el('code', {}, r.dest), ` · commit ${String(r.commit).slice(0, 10)} · ${r.checkedAt ? `comprobado ${new Date(r.checkedAt).toLocaleString()}` : WATCH_STATUS[r.status] || r.status}${r.detail ? ` · ${r.detail}` : ''}${WATCH_STATUS[r.status] && r.checkedAt ? ` · ${WATCH_STATUS[r.status]}` : ''}`),
+      ...(r.alerts.length ? r.alerts.slice(0, 8).map((a) => el('div', { class: `walert${a.read ? '' : ' unread'}` },
+        el('span', { class: `sev ${a.severity}` }, SEV[a.severity] || a.severity), ' ', a.kev ? 'Se está explotando · ' : '', extLink(`https://osv.dev/vulnerability/${encodeURIComponent(a.id)}`, el('code', {}, a.id)), ` ${a.title}${a.file ? ` (${a.file})` : ''} · ${new Date(a.at).toLocaleDateString()}`))
+        : [el('div', { class: 'wmeta' }, 'Sin avisos nuevos desde el clon.')]))));
+    if (unread) watchCall('/api/watch/read', {}).catch(() => {});
+  }
+  async function loadWatch() {
+    try { renderWatch(await watchCall('/api/watch')); } catch { $('#watchPanel').hidden = true; }
+  }
+  $('#watchBtn').addEventListener('click', async () => {
+    const b = $('#watchBtn');
+    b.disabled = true;
+    b.textContent = 'Comprobando…';
+    try { renderWatch({ enabled: true, ...(await watchCall('/api/watch/check', {})) }); } catch (e) { $('#watchNote').textContent = e.message; }
+    b.disabled = false;
+    b.textContent = 'Comprobar ahora';
+  });
 
   // ---------- Análisis ----------
   const STEPS = ['Descargando el repositorio en una carpeta aislada (sin ejecutar nada)', 'Revisando el historial de git y los submódulos', 'Buscando vulnerabilidades en el código', 'Buscando scripts maliciosos y autoejecutables', 'Decodificando payloads ocultos (ingeniería inversa)', 'Consultando vulnerabilidades conocidas de las dependencias', 'Evaluando la reputación del autor'];
@@ -1161,6 +1220,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         r.pinnedToAnalyzedCommit ? el('div', {}, 'El repositorio cambió después del análisis: lo he dejado en el commit analizado.') : null,
         r.fixesApplied && r.fixesApplied.length ? changesBlock(r) : null].filter(Boolean));
       out.hidden = false;
+      if (LIVE) loadWatch();
       btn.textContent = 'Clonado';
     } catch (e) {
       out.className = 'err';

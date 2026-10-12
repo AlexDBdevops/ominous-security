@@ -67,6 +67,17 @@ test('servidor HTTP', async (t) => {
     const cross = await req('POST', '/api/ai-connection', { ...json, origin: 'https://evil.example' }, JSON.stringify({ method: 'none' }));
     assert.equal(cross.status, 403);
   });
+  await t.test('vigilancia de clones: lista vacía, JSON y mismo origen', async () => {
+    const g = await req('GET', '/api/watch', host);
+    assert.equal(g.status, 200);
+    const j = JSON.parse(g.body);
+    assert.equal(j.enabled, true);
+    assert.deepEqual(j.repos, []);
+    const json = { ...host, 'content-type': 'application/json' };
+    assert.equal((await req('POST', '/api/watch/check', host, '{}')).status, 415);
+    assert.equal((await req('POST', '/api/watch/forget', { ...json, origin: 'https://evil.example' }, '{"id":"x"}')).status, 403);
+    assert.deepEqual(JSON.parse((await req('POST', '/api/watch/forget', json, '{"id":"x"}')).body), { removed: 0 });
+  });
   await t.test('la CSP autoriza el script por hash y no carga nada de terceros', async () => {
     const r = await req('GET', '/', host);
     const csp = r.headers['content-security-policy'];

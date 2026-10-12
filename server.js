@@ -15,12 +15,15 @@ const { summarizeDiff } = require('./lib/summary');
 const { scanHistory } = require('./lib/history');
 const { parseGitmodules } = require('./lib/extra');
 const { externalPass } = require('./lib/external');
+const { Watch } = require('./lib/watch');
 const ai = require('./lib/ai');
 const conn = require('./lib/connection');
 const { parseGithubUrl, repoMetaFrom, parseScorecard, releasePass, movedPass, scorecardCoverage } = require('./lib/github');
 const HISTORY_COMMITS = Number(process.env.HISTORY_COMMITS) || 300;
 const MAX_SUBMODULES = 8;
 const ANALYSIS_TIMEOUT = Number(process.env.ANALYSIS_TIMEOUT_MS) || 5 * 60 * 1000;
+const WATCH = process.env.OMINOUS_WATCH !== '0';
+const WATCH_HOURS = Number(process.env.OMINOUS_WATCH_HOURS) || 24;
 
 // Análisis en un hilo aparte con tiempo máximo.
 function runAnalysis(root, meta, log, extra) {
@@ -44,6 +47,7 @@ const CLONE_DIR = process.env.CLONE_DIR || path.join(os.homedir(), 'ominous-clon
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const NO_HOOKS = path.join(os.tmpdir(), 'ominous-no-hooks-dir');
 const analyses = new Map(); // id -> { repo, commit, result, at }
+const watch = new Watch(CLONE_DIR);
 const MAX_ANALYSES = 50;
 const MAX_REPO_MB = Number(process.env.MAX_REPO_MB) || 1024;
 const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT) || 2;
@@ -243,6 +247,12 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
     summary = await summarizeDiff({ diff, fixes, repo: `${a.ref.owner}/${a.ref.repo}` });
   }
   a.clonedTo = target;
+  if (WATCH) {
+    try {
+      const deps = [...a.payload.vulnerabilities, ...a.payload.threats].filter((f) => f.rule === 'dep-vuln' || f.rule === 'malicious-package');
+      watch.add({ owner: a.ref.owner, repo: a.ref.repo, commit: a.commit, dest: fs.realpathSync(target), findings: deps });
+    } catch (e) { console.error(`✗ vigilancia: ${e.message}`); }
+  }
   return { path: target, commit: a.commit, pinnedToAnalyzedCommit: pinned, fixesApplied: fixes, diff: diff.slice(0, 400000), diffTruncated: diff.length > 400000, summary };
 }
 
@@ -384,6 +394,19 @@ const server = http.createServer(async (req, res) => {
       console.log(`→ Conexión con Claude: ${r.method || 'ninguna'} ${r.connected ? '✓' : '✗'}`);
       return send(res, 200, r);
     }
+    // Expuesta a la red: no se enseñan rutas completas del disco (como cloneDir en /api/health).
+    const watchView = (w) => (EXPOSED ? { ...w, repos: w.repos.map((r) => ({ ...r, dest: path.relative(CLONE_DIR, r.dest) })) } : w);
+    if (req.method === 'GET' && url.pathname === '/api/watch') return send(res, 200, { enabled: WATCH, hours: WATCH_HOURS, ...watchView(watch.list()) });
+    if (req.method === 'POST' && /^\/api\/watch\/(check|forget|read)$/.test(url.pathname)) {
+      if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
+      const body = await readJson(req);
+      if (!WATCH) return send(res, 409, { error: 'La vigilancia está desactivada (OMINOUS_WATCH=0).' });
+      if (url.pathname.endsWith('/forget')) return send(res, 200, watch.forget(String(body.id || '')));
+      if (url.pathname.endsWith('/read')) { watch.markRead(); return send(res, 200, watchView(watch.list())); }
+      if (rateLimited(req.socket.remoteAddress)) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
+      console.log('→ Comprobando los clones vigilados');
+      return send(res, 200, watchView(await watch.check((m) => console.log(`  ${m}`))));
+    }
     if (req.method === 'POST' && url.pathname === '/api/revert') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
       return send(res, 200, await revert(await readJson(req)));
@@ -409,6 +432,12 @@ if (require.main === module) {
     console.log(`\n  Ominous Security escuchando en http://localhost:${PORT}`);
     console.log(`  Los clones se guardan en ${CLONE_DIR}\n`);
   });
+  if (WATCH) {
+    // Vigilancia de los clones: al poco de arrancar y luego cada WATCH_HOURS horas.
+    const tick = () => watch.check((m) => console.log(`  ${m}`)).catch((e) => console.error(`✗ vigilancia: ${e.message}`));
+    setTimeout(tick, 60000).unref();
+    setInterval(tick, WATCH_HOURS * 3600e3).unref();
+  }
 }
 
 module.exports = { parseGithubUrl, resolveDest, server };
