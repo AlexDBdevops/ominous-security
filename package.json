@@ -13,7 +13,8 @@
     "test:ci": "node --test --experimental-test-coverage --test-coverage-include=lib/** --test-coverage-include=bin/** --test-coverage-include=server.js --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=junit.xml test/*.test.js",
     "scan:self": "node bin/ominous-scan.js . --exclude lib/rules.js,lib/decoder.js,lib/extra.js,public/index.html,public/analyzer.js,README.md,test/,node_modules/ --fail-on red",
     "build:site": "node scripts/build-site.js dist",
-    "build:web": "node scripts/build-web.js"
+    "build:web": "node scripts/build-web.js",
+    "update:data": "node scripts/update-data.js"
   },
   "engines": {
     "node": ">=18"
@@ -21,6 +22,7 @@
   "files": [
     "server.js",
     "lib/",
+    "data/",
     "bin/",
     "public/",
     "README.md",

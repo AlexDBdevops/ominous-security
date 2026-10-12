@@ -20,6 +20,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY server.js ./
 COPY lib ./lib
+COPY data ./data
 COPY bin ./bin
 COPY public ./public
 RUN ln -s /app/bin/ominous-scan.js /usr/local/bin/ominous-scan && chmod +x /app/bin/ominous-scan.js

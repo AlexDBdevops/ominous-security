@@ -19,7 +19,7 @@ async function analyze(url, log = () => {}, token = null) {
   const ref = parseGithubUrl(url);
   if (!ref) throw new GhError('URL no válida. Usa algo como https://github.com/usuario/repositorio', { status: 400 });
   const got = await fetchRepo(ref, { log, token });
-  const extra = { vulns: [], threats: [], coverage: [] };
+  const extra = { vulns: [], threats: [], coverage: [], ref: { owner: got.owner, repo: got.name, commit: got.commit } };
   movedPass(ref, got.meta, extra);
   scorecardCoverage(got.meta, extra);
   releasePass(got.meta, extra);

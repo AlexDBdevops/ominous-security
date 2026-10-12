@@ -154,13 +154,14 @@ test('web: límite de GitHub, sin conexión y URL no válida', async (t) => {
   assert.equal(bad.status, 400);
 });
 
-test('web: solo pide a GitHub, OSV y Scorecard, y descarga el commit analizado', async (t) => {
+test('web: solo pide a los servicios permitidos por la CSP, y descarga el commit analizado', async (t) => {
   const dir = fx.cleanRepo();
   t.after(() => fx.rm(dir));
   const calls = [];
   const r = await call(loadBundle(fakeGithub(dir, { calls })), { type: 'analyze', url: 'https://github.com/acme/tool' });
   assert.ok(r.result);
-  for (const c of calls) assert.match(new URL(c).hostname, /^(api\.github\.com|raw\.githubusercontent\.com|api\.osv\.dev|api\.securityscorecards\.dev)$/);
+  const allowed = require('../lib/page').WEB_HOSTS.map((h) => new URL(h).hostname);
+  for (const c of calls) assert.ok(allowed.includes(new URL(c).hostname), c);
   assert.ok(calls.filter((c) => c.includes('raw.githubusercontent.com')).every((c) => c.includes(`/${SHA}/`)));
 });
 

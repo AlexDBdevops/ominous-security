@@ -118,7 +118,7 @@ async function analyze(url) {
     const branch = ref.branch || await git(['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD']);
     const meta = await metaP;
     const log = (m) => console.log(`  [${ref.owner}/${ref.repo}] ${m}`);
-    const extra = { vulns: [], threats: [], coverage: [] };
+    const extra = { vulns: [], threats: [], coverage: [], ref: { owner: ref.owner, repo: ref.repo, commit } };
     movedPass(ref, meta, extra);
     scorecardCoverage(meta, extra);
     await historyPass(dir, extra, log);

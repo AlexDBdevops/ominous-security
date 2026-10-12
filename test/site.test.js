@@ -24,7 +24,7 @@ test('la demo estática lleva la misma CSP por hash, las fuentes y ningún recur
   assert.match(html, /const EDITION = 'web';/);
   assert.ok(fs.existsSync(path.join(out, 'analyzer.js')), 'lleva el analizador');
   const connect = headers.match(/connect-src ([^;]+)/)[1].trim().split(/\s+/).sort();
-  assert.deepEqual(connect, ['https://api.github.com', 'https://api.osv.dev', 'https://api.securityscorecards.dev', 'https://raw.githubusercontent.com']);
+  assert.deepEqual(connect, ['https://api.deps.dev', 'https://api.first.org', 'https://api.github.com', 'https://api.osv.dev', 'https://api.securityscorecards.dev', 'https://files.pythonhosted.org', 'https://pypi.org', 'https://raw.githubusercontent.com', 'https://registry.npmjs.org']);
   assert.match(headers, /worker-src 'self'/);
   assert.match(headers, /Strict-Transport-Security/);
   for (const f of ['chakra-petch-700.woff2', 'ibm-plex-sans.woff2', 'jetbrains-mono.woff2', 'OFL.txt']) assert.ok(fs.existsSync(path.join(out, 'fonts', f)), f);
