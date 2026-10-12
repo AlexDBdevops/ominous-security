@@ -5,12 +5,13 @@
 
 Herramienta web que analiza un repositorio de GitHub **antes de clonarlo**: vulnerabilidades del código, amenazas puestas a propósito por el autor y scripts ocultos o cifrados, que descifra sin ejecutarlos. Al final te deja clonarlo (con confirmación si algo no está en verde) y aplicar los arreglos automáticos, con el diff y un resumen de lo que ha cambiado.
 
-**Demo sin instalar nada:** https://alexdbdevops.github.io/ominous-security/ (datos simulados).
+**Sin instalar nada:** https://ominous-security.pages.dev (análisis real en el navegador; los tres ejemplos usan datos simulados). Ver [Versión web](#versión-web).
 
 - [Inicio rápido](#inicio-rápido)
 - [Configuración](#configuración)
 - [Despliegue](#despliegue)
 - [Qué analiza](#qué-analiza)
+- [Vigilancia de tus clones](#vigilancia-de-tus-clones)
 - [Seguridad de la propia herramienta](#seguridad-de-la-propia-herramienta)
 - [Escáner por línea de comandos](#escáner-por-línea-de-comandos)
 - [Desarrollo y CI/CD](#desarrollo-y-cicd)
@@ -75,11 +76,14 @@ Todo se configura con variables de entorno. Con Docker, ponlas en un fichero `.e
 | `MAX_REPO_MB` | `1024` | Tamaño máximo del repo, según GitHub |
 | `MAX_CONCURRENT` | `2` | Análisis simultáneos |
 | `RATE_LIMIT` | `30` | Análisis por IP cada 10 minutos |
-| `OMINOUS_OFFLINE` | — | `1` no consulta OSV.dev (útil en tests o sin conexión) |
-| `OMINOUS_EXTERNAL` | — | `0` no usa Gitleaks, Semgrep ni Trivy aunque estén instalados (ver [Herramientas externas](#herramientas-externas-opcionales)) |
-| `OMINOUS_GITLEAKS_BIN`, `OMINOUS_SEMGREP_BIN`, `OMINOUS_TRIVY_BIN` | el del `PATH` | Ruta de cada herramienta externa |
-| `OMINOUS_SEMGREP_CONFIG` | `p/default` | Reglas de Semgrep: un conjunto del registro o un fichero o carpeta local (sin conexión con semgrep.dev) |
-| `OMINOUS_EXTERNAL_TIMEOUT_MS` | `240000` | Tiempo máximo de cada herramienta externa |
+| `OMINOUS_OFFLINE` | — | `1` no consulta ningún servicio externo: OSV.dev, deps.dev, EPSS ni los registros de npm y PyPI (útil en tests o sin conexión) |
+| `OMINOUS_EXTERNAL` | — | `0` no usa Gitleaks, Semgrep, Trivy ni CodeQL aunque estén instalados (ver [Herramientas externas](#herramientas-externas-opcionales)) |
+| `OMINOUS_GITLEAKS_BIN`, `OMINOUS_SEMGREP_BIN`, `OMINOUS_TRIVY_BIN`, `OMINOUS_CODEQL_BIN` | el del `PATH` | Ruta de cada herramienta externa |
+| `OMINOUS_SEMGREP_CONFIG` | `p/default` | Reglas de Semgrep, separadas por comas: conjuntos del registro (`p/default,p/owasp-top-ten`) o ficheros y carpetas locales, como un clon de [semgrep-rules](https://github.com/semgrep/semgrep-rules) (así no conecta con semgrep.dev) |
+| `OMINOUS_EXTERNAL_TIMEOUT_MS` | `240000` | Tiempo máximo de Gitleaks, Semgrep y Trivy |
+| `OMINOUS_CODEQL_TIMEOUT_MS` | `480000` | Tiempo máximo de CodeQL por lenguaje |
+| `OMINOUS_WATCH` | — | `0` desactiva la [vigilancia de tus clones](#vigilancia-de-tus-clones) |
+| `OMINOUS_WATCH_HOURS` | `24` | Cada cuántas horas se comprueban los clones |
 
 ## Despliegue
 
@@ -146,7 +150,7 @@ Entra una vez en `https://ominous.tudominio.com/?token=<tu token>`. Caddy obtien
 
 La misma página se publica en Cloudflare Pages en su edición **web**: analiza repos públicos de verdad desde el navegador de quien la visita, sin servidor y sin IA (ver [Versión web](#versión-web)). Usa el mismo montaje que el CV: Terraform crea el proyecto de Pages (`infra/main.tf`, estado en HCP Terraform) y Wrangler sube la web. En cada push a `main`, el job `pages` genera `dist/` con `npm run build:site`, aplica Terraform y despliega.
 
-`dist/_headers` lleva las mismas cabeceras de seguridad que el servidor, más HSTS. La CSP autoriza el script de la página por su hash, `analyzer.js` del propio dominio y conexiones solo a `api.github.com`, `raw.githubusercontent.com`, `api.osv.dev` y `api.securityscorecards.dev`.
+`dist/_headers` lleva las mismas cabeceras de seguridad que el servidor, más HSTS. La CSP autoriza el script de la página por su hash, `analyzer.js` del propio dominio y conexiones solo a `api.github.com`, `raw.githubusercontent.com`, `api.osv.dev`, `api.securityscorecards.dev`, `api.deps.dev`, `api.first.org` (EPSS), `registry.npmjs.org`, `pypi.org` y `files.pythonhosted.org`. Todas son consultas de solo lectura a datos públicos, y el token de GitHub opcional solo va a `api.github.com`.
 
 Configuración, una sola vez (puedes reutilizar el token y la organización del CV):
 
@@ -174,8 +178,18 @@ En el servidor local, si tienes instaladas estas herramientas de código abierto
 | [Gitleaks](https://github.com/gitleaks/gitleaks) | más de un centenar de reglas de secretos, también en el historial descargado | `brew install gitleaks` |
 | [Semgrep](https://github.com/semgrep/semgrep) | el conjunto `p/default`: cientos de reglas de seguridad en más de 30 lenguajes. Descarga las reglas de semgrep.dev, con las métricas desactivadas | `pipx install semgrep` |
 | [Trivy](https://github.com/aquasecurity/trivy) | secretos y errores de configuración en Dockerfile, Kubernetes, Terraform, CloudFormation y Helm | `brew install trivy` |
+| [CodeQL](https://github.com/github/codeql-cli-binaries) | **recorridos de datos**: sigue cada valor desde donde entra (una petición, un argumento, un fichero) hasta donde hace daño (`exec`, SQL, `eval`…), también entre funciones y ficheros. Usa el conjunto `security-extended` | el *bundle* de [codeql-action](https://github.com/github/codeql-action/releases) (trae las consultas) |
 
 Ninguna ejecuta código del repo: solo leen ficheros. Se lanzan sin shell, con tiempo máximo y un entorno mínimo, en paralelo. Si una no está instalada, no aparece; si falla, sale como "no revisado". La imagen de Docker no las incluye. No están en la versión web porque no se pueden ejecutar en un navegador.
+
+**Sobre CodeQL:**
+
+- Solo analiza JavaScript/TypeScript, Python y Ruby. Java, Kotlin, C#, C/C++, Go y Swift suelen necesitar compilar el proyecto, y compilar ejecuta código del repo (plugins de Maven o Gradle, scripts de build). Eso rompería la regla de no ejecutar nada.
+- Es lento: cada lenguaje tarda de medio minuto a varios minutos, y el *bundle* ocupa más de 1 GB.
+- Cada hallazgo muestra en su ficha **el recorrido del dato**, paso a paso, con fichero y línea. Si en algún paso se valida o se escapa el dato, puede ser un falso positivo.
+- Su licencia permite usarlo gratis en código open source y en investigación. Revisa sus [condiciones](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md) antes de usarlo con código privado.
+
+**Sobre Semgrep:** la versión gratuita también sigue datos, pero solo dentro de cada función. Sus reglas se descargan al usarlas y su licencia no permite copiarlas dentro de otra herramienta, así que Ominous no las incluye: usa las que tengas instaladas o descargadas.
 
 ## Versión web
 
@@ -191,7 +205,7 @@ En las ediciones web, `public/analyzer.js` (el mismo analizador de `lib/`, empaq
 
 1. Pide los metadatos del repo y el commit de la rama a la API de GitHub, y la lista de ficheros de ese commit.
 2. Descarga cada fichero desde `raw.githubusercontent.com` en ese commit exacto, a la memoria de la pestaña. Nada se escribe en disco ni se ejecuta.
-3. Pasa las mismas reglas que el servidor (los tests comprueban que los hallazgos son idénticos) y consulta OSV.dev y OpenSSF Scorecard.
+3. Pasa las mismas reglas que el servidor (los tests comprueban que los hallazgos son idénticos) y consulta OSV.dev, OpenSSF Scorecard, deps.dev, EPSS y los registros de npm y PyPI (ver [Más allá del repo](#más-allá-del-repo)).
 4. Si el análisis pasa de 5 minutos, la página corta el worker (protege de ficheros diseñados para colgar analizadores).
 
 Para clonar, la página da el comando que deja el clon en el commit analizado y, si se pide, descarga un parche con los arreglos automáticos para aplicarlo con `git apply`.
@@ -205,7 +219,7 @@ Límites de la versión web frente al servidor local:
 - Sin historial de git ni submódulos (se marcan como no revisados).
 - Sin iniciar sesión, la API de GitHub permite 60 consultas por hora por IP. Cada análisis usa unas 5. Los ficheros desde `raw.githubusercontent.com` no cuentan. Con un token de GitHub opcional (fine-grained y sin permisos) sube a 5000: solo se envía a `api.github.com`, vive en la memoria del worker durante el análisis y nunca se guarda.
 - Hasta 3000 ficheros, 2 MB por fichero y 60 MB en total.
-- Si OSV.dev o Scorecard no responden al navegador, salen como "no revisado" en lugar de fallar.
+- Si algún servicio (OSV.dev, Scorecard, deps.dev, EPSS, npm o PyPI) no responde al navegador, sale como "no revisado" en lugar de fallar.
 
 ## Qué analiza
 
@@ -255,6 +269,32 @@ Seguridad de la ventana:
 **Cobertura.** Cada análisis muestra qué se ha revisado por completo, qué parcialmente y qué no.
 
 **Clonar.** El botón está al final. Si el resultado no está en verde exige marcar la casilla de confirmación, y el servidor también lo comprueba. El clon se fija al commit exacto que se analizó. Si aplicas arreglos verás el diff y un resumen de cada cambio, por qué es más seguro y qué podría romper, y podrás deshacerlos con un botón. El resumen lo escribe Claude si está conectado; en ese caso, y solo en ese, el diff se envía a Claude.
+
+### Más allá del repo
+
+Lo que no está en el código que descargas, pero te afecta igual:
+
+- **El paquete publicado.** `npm install` y `pip install` no descargan el repo: descargan lo que el autor (o quien le haya robado la cuenta) subió al registro. Si el repo publica un paquete en npm o PyPI que enlaza a ese mismo repo, se descarga la última versión (sin instalarla) y se compara con GitHub: scripts de instalación distintos, ficheros `.pth` o `setup.py` que no están en el repo, y las reglas de amenazas sobre cada fichero que no coincide.
+- **Vulnerabilidades del propio proyecto.** Se consulta en OSV.dev el commit analizado y el paquete del proyecto (nombre y versión).
+- **Dependencias indirectas sin lockfile.** Si un `package.json` no trae `package-lock.json` ni `yarn.lock`, solo se conocen las dependencias directas, pero `npm install` instalaría también las de esas. [deps.dev](https://deps.dev) resuelve el árbol que saldría hoy (la versión más alta que cumple cada rango) y todo se consulta en OSV.dev. De momento solo npm.
+- **¿Se está explotando?** Las CVE de cada aviso se cruzan con el [catálogo KEV de CISA](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) (vulnerabilidades que se están explotando ya: sube la gravedad a alta como mínimo) y con [EPSS](https://www.first.org/epss/) (probabilidad de explotación en los próximos 30 días). Solo pueden subir la gravedad, nunca bajarla.
+
+## Vigilancia de tus clones
+
+En el servidor local, cada repo que clonas desde la app queda apuntado con los avisos que ya tenían sus dependencias. Al arrancar y luego cada 24 horas (`OMINOUS_WATCH_HOURS`), o con el botón **Comprobar ahora**, se vuelven a leer sus ficheros de dependencias, se consultan en OSV.dev y aparece en la sección **Vigilancia de tus clones** cualquier vulnerabilidad publicada después del clon, una sola vez y marcada si ya se está explotando.
+
+Solo se leen los ficheros de dependencias del clon (sin `node_modules` ni enlaces que salgan de `CLONE_DIR`); nada se ejecuta. La lista está en `CLONE_DIR/.ominous/watch.json`, con permisos solo para tu usuario, y a OSV.dev solo van nombres y versiones de paquetes, igual que en el análisis. `OMINOUS_WATCH=0` la desactiva.
+
+### Datos que se actualizan solos
+
+Los avisos de las dependencias no caducan: se consultan en OSV.dev en cada análisis. Lo que sí envejece está en `data/`:
+
+| Fichero | Qué es | Fuente |
+|---|---|---|
+| `data/kev.json` | CVE que se están explotando | catálogo KEV de CISA |
+| `data/popular.json` | paquetes más descargados de npm y PyPI: objetivos de typosquatting y nombres legítimos que no se marcan | [npm-high-impact](https://github.com/wooorm/npm-high-impact) y [top-pypi-packages](https://github.com/hugovk/top-pypi-packages) |
+
+Cada lunes, el workflow `update-data.yml` ejecuta `npm run update:data`, valida lo descargado, regenera `public/analyzer.js`, pasa lint y tests y, si algo ha cambiado, abre un PR para que lo revises. Nunca toca `main` directamente. Para que pueda abrir el PR, activa una vez *Settings > Actions > General > Allow GitHub Actions to create and approve pull requests*. En local: `npm run update:data`.
 
 ## Seguridad de la propia herramienta
 
@@ -311,7 +351,7 @@ Los tests generan sus repos trampa en una carpeta temporal en cada ejecución (`
 | `pages` | versión web en Cloudflare Pages: Terraform y Wrangler (solo en `main`) |
 | `release` | release de GitHub al subir una etiqueta `vX.Y.Z` que coincida con `package.json` |
 
-`codeql.yml` pasa CodeQL cada semana y en cada PR, y Dependabot vigila npm, las acciones y la imagen base.
+`codeql.yml` pasa CodeQL cada semana y en cada PR, `update-data.yml` refresca cada semana los [datos que envejecen](#datos-que-se-actualizan-solos) con un PR, y Dependabot vigila npm, las acciones y la imagen base.
 
 Para publicar una versión, sube la versión en `package.json`, haz commit y ejecuta `git tag v1.0.1 && git push --tags`.
 
@@ -334,10 +374,14 @@ Al autoescanearse se excluyen `lib/rules.js`, `lib/decoder.js`, `lib/extra.js`, 
 | `Claude Code está instalado pero sin sesión` | Ejecuta `claude` en una terminal e inicia sesión con tu cuenta Pro o Max |
 | `la clave solo se puede escribir desde este mismo equipo o a través de HTTPS` | La app está expuesta sin HTTPS. Pon la clave en `ANTHROPIC_API_KEY` o publica la app detrás de un proxy con TLS |
 | El puerto 8080 está ocupado | `OMINOUS_PORT=9090 scripts/local.sh` |
+| CodeQL: `sin revisar: Python: … autobuild.sh` | Las versiones antiguas de CodeQL no funcionan con Python 3.13. Actualiza el *bundle* de CodeQL o pon antes en el `PATH` un `python3` 3.12 |
+| CodeQL no aparece en la cobertura | No está en el `PATH` o el repo no tiene JavaScript/TypeScript, Python ni Ruby. Indica la ruta con `OMINOUS_CODEQL_BIN` |
+| `Paquete publicado en npm: no se pudo comparar` | Sin conexión con el registro o el paquete pasa de 25 MB |
+| La vigilancia dice `la carpeta ya no existe` | Has movido o borrado el clon. Pulsa **Dejar de vigilar** |
 
 ## Límites
 
-Es análisis estático por patrones: reduce mucho el riesgo, pero no es una garantía. Un atacante decidido puede esquivar reglas concretas o descargar el payload real en tiempo de ejecución desde un servidor (eso se marca, pero no se puede ver qué descargará). Analiza hasta 8000 ficheros de 1,5 MB como máximo. Los binarios de las releases y los ficheros de Git LFS no se descargan.
+Es análisis estático por patrones (y por recorridos de datos si tienes CodeQL): reduce mucho el riesgo, pero no es una garantía. Un atacante decidido puede esquivar reglas concretas o descargar el payload real en tiempo de ejecución desde un servidor (eso se marca, pero no se puede ver qué descargará). Analiza hasta 8000 ficheros de 1,5 MB como máximo. Los binarios de las releases y los ficheros de Git LFS no se descargan.
 
 ## Estructura
 
@@ -347,10 +391,13 @@ bin/ominous-scan.js  escáner por línea de comandos (JSON, SARIF, Code Quality)
 lib/analyzer.js      recorrido del repo, chequeos estructurales, veredicto, arreglos automáticos
 lib/rules.js         reglas de vulnerabilidades y amenazas
 lib/decoder.js       ingeniería inversa de payloads codificados o cifrados
-lib/deps.js          dependencias (OSV.dev) y typosquatting
+lib/deps.js          dependencias (OSV.dev), typosquatting, CISA KEV y EPSS
+lib/depsdev.js       dependencias indirectas de npm sin lockfile (deps.dev)
+lib/beyond.js        paquete publicado en npm o PyPI y avisos del propio proyecto
+lib/watch.js         vigilancia de los repos clonados
 lib/extra.js         autoejecutables, agentes de IA, lockfiles, señuelos, ZIP, imágenes, homoglifos
 lib/history.js       historial de git
-lib/external.js      Gitleaks, Semgrep y Trivy si están instalados (opcional)
+lib/external.js      Gitleaks, Semgrep, Trivy y CodeQL si están instalados (opcional)
 lib/summary.js       resumen del diff de los arreglos (Claude o local)
 lib/ai.js            revisión con IA: selección de ficheros, prompt, esquema y validación
 lib/connection.js    conexión con Claude: clave de la API o Claude Code con tu cuenta
@@ -366,6 +413,8 @@ compose.yaml         despliegue local endurecido; compose.lan.yaml lo abre a tu 
 scripts/local.sh     construir y arrancar en local (local.ps1 en Windows)
 scripts/build-site.js versión web para Cloudflare Pages (dist/ con _headers)
 scripts/build-web.js genera public/analyzer.js con esbuild
+scripts/update-data.js refresca data/ (KEV y paquetes populares)
+data/                datos que envejecen, actualizados cada semana por update-data.yml
 infra/main.tf        proyecto de Cloudflare Pages en Terraform
 tools/deploy/        Wrangler fijado a una versión exacta
 lib/page.js          interfaz y CSP de cada edición
