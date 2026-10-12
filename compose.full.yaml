@@ -1,0 +1,14 @@
+# Variante completa (Gitleaks, Semgrep, Trivy y CodeQL). Se añade a compose.yaml:
+#   docker compose -f compose.yaml -f compose.full.yaml up -d --build
+# o, más cómodo, scripts/local.sh full (.\scripts\local.ps1 full en Windows).
+# Mantiene todo el endurecimiento de compose.yaml; solo cambia la imagen y da más
+# memoria y procesos, porque CodeQL crea una base de datos del código.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.full
+    image: ominous-security:full
+    mem_limit: 4g
+    pids_limit: 512

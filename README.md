@@ -92,10 +92,13 @@ Todo se configura con variables de entorno. Con Docker, ponlas en un fichero `.e
 
 ```bash
 scripts/local.sh            # construir y arrancar
+scripts/local.sh full       # lo mismo con Gitleaks, Semgrep, Trivy y CodeQL dentro (ver abajo)
 scripts/local.sh logs       # ver los logs
 scripts/local.sh down       # parar
 scripts/local.sh rebuild    # reconstruir sin caché (por ejemplo, tras actualizar)
 ```
+
+`full` usa `Dockerfile.full` y `compose.full.yaml`: la misma app sobre Debian 13 (CodeQL necesita glibc; trae git 2.47.3, ya corregido) con las cuatro [herramientas externas](#herramientas-externas-opcionales) instaladas en versiones fijas y comprobadas por sha256, y Semgrep instalado solo desde ruedas con todos los hashes (`docker/semgrep-requirements.txt`, que se regenera con `docker/lock-semgrep.py`). Mantiene el mismo endurecimiento con 4 GB de memoria y 512 procesos, porque CodeQL crea una base de datos del código. La imagen ocupa bastante más que la normal.
 
 El contenedor (`compose.yaml`) corre con tu usuario, con el sistema de ficheros en solo lectura y sin capacidades de Linux, no puede escalar privilegios y tiene límites de memoria (2 GB), CPU (2) y procesos (256). Solo escribe en la carpeta de clones y en `/tmp`.
 
@@ -168,7 +171,7 @@ En el servidor local, si tienes instaladas estas herramientas de código abierto
 | [Trivy](https://github.com/aquasecurity/trivy) | secretos y errores de configuración en Dockerfile, Kubernetes, Terraform, CloudFormation y Helm | `brew install trivy` |
 | [CodeQL](https://github.com/github/codeql-cli-binaries) | **recorridos de datos**: sigue cada valor desde donde entra (una petición, un argumento, un fichero) hasta donde hace daño (`exec`, SQL, `eval`…), también entre funciones y ficheros. Usa el conjunto `security-extended` | el *bundle* de [codeql-action](https://github.com/github/codeql-action/releases) (trae las consultas) |
 
-Ninguna ejecuta código del repo: solo leen ficheros. Se lanzan sin shell, con tiempo máximo y un entorno mínimo, en paralelo. Si una no está instalada, no aparece; si falla, sale como "no revisado". La imagen de Docker no las incluye. No están en la versión web porque no se pueden ejecutar en un navegador.
+Ninguna ejecuta código del repo: solo leen ficheros. Se lanzan sin shell, con tiempo máximo y un entorno mínimo, en paralelo. Si una no está instalada, no aparece; si falla, sale como "no revisado". La imagen de Docker normal no las incluye; la completa (`scripts/local.sh full`) trae las cuatro. No están en la versión web porque no se pueden ejecutar en un navegador.
 
 **Sobre CodeQL:**
 
@@ -406,7 +409,9 @@ public/index.html    interfaz (ediciones local, web y web-ai)
 public/analyzer.js   analizador empaquetado para el navegador (generado, no editar)
 public/fonts/        fuentes autoalojadas (OFL)
 Dockerfile           imagen (usuario sin privilegios, tini, healthcheck)
-compose.yaml         despliegue local endurecido; compose.lan.yaml lo abre a tu red con token
+Dockerfile.full      imagen completa: lo mismo más Gitleaks, Semgrep, Trivy y CodeQL fijados por sha256
+docker/              versiones fijadas de Semgrep (semgrep-requirements.txt) y el script que las genera
+compose.yaml         despliegue local endurecido; compose.lan.yaml lo abre a tu red con token; compose.full.yaml usa la imagen completa
 scripts/local.sh     construir y arrancar en local (local.ps1 en Windows)
 scripts/build-site.js versión web para GitHub Pages (dist/ con la CSP en un meta)
 scripts/build-web.js genera public/analyzer.js con esbuild
