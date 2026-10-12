@@ -9,25 +9,28 @@ const { scriptHashes } = require('../lib/page');
 
 const BUILD = path.join(__dirname, '..', 'scripts', 'build-site.js');
 
-test('la demo estática lleva la misma CSP por hash, las fuentes y ningún recurso de terceros', (t) => {
+test('la demo estática lleva la CSP en un meta con hashes, las fuentes y ningún recurso de terceros', (t) => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'ominous-site-'));
   t.after(() => fs.rmSync(out, { recursive: true, force: true }));
   execFileSync(process.execPath, [BUILD, out]);
   const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
-  const headers = fs.readFileSync(path.join(out, '_headers'), 'utf8');
   assert.match(html, /^<!doctype html>/);
-  for (const h of scriptHashes(html)) assert.ok(headers.includes(h), 'el hash del script está en la CSP');
-  const scriptSrc = headers.match(/script-src ([^;]+)/)[1];
+  const csp = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/)[1];
+  assert.ok(html.indexOf('Content-Security-Policy') < html.indexOf('<script'), 'la CSP va antes de cualquier script');
+  for (const h of scriptHashes(html)) assert.ok(csp.includes(h), 'el hash de cada script está en la CSP');
+  const scriptSrc = csp.match(/script-src ([^;]+)/)[1];
   assert.ok(!scriptSrc.includes('unsafe-inline'), 'scripts sin unsafe-inline');
+  assert.ok(!/frame-ancestors/.test(csp), 'frame-ancestors no vale en un meta');
+  assert.match(html, /<style id="antiframe">html\{display:none!important\}<\/style>/, 'oculta la página dentro de marcos ajenos');
+  assert.match(html, /<meta name="referrer" content="no-referrer">/);
   assert.ok(!/<(link|script|img|iframe)[^>]+(href|src)="https?:/i.test(html), 'sin recursos externos');
-  assert.match(headers, /frame-ancestors 'none'/);
   assert.match(html, /const EDITION = 'web';/);
   assert.ok(fs.existsSync(path.join(out, 'analyzer.js')), 'lleva el analizador');
-  const connect = headers.match(/connect-src ([^;]+)/)[1].trim().split(/\s+/).sort();
+  const connect = csp.match(/connect-src ([^;]+)/)[1].trim().split(/\s+/).sort();
   assert.deepEqual(connect, ['https://api.deps.dev', 'https://api.first.org', 'https://api.github.com', 'https://api.osv.dev', 'https://api.securityscorecards.dev', 'https://files.pythonhosted.org', 'https://pypi.org', 'https://raw.githubusercontent.com', 'https://registry.npmjs.org']);
-  assert.match(headers, /worker-src 'self'/);
-  assert.match(headers, /Strict-Transport-Security/);
+  assert.match(csp, /worker-src 'self'/);
   for (const f of ['chakra-petch-700.woff2', 'ibm-plex-sans.woff2', 'jetbrains-mono.woff2', 'OFL.txt']) assert.ok(fs.existsSync(path.join(out, 'fonts', f)), f);
+  execFileSync(process.execPath, [BUILD, out]); // se puede regenerar encima
 });
 
 test('no borra una carpeta que no sea una demo generada', (t) => {

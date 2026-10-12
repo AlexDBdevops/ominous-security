@@ -7,7 +7,7 @@
 #   audit       npm audit de las dependencias
 #   docker      imagen con prueba de humo y escaneo Trivy; se publica en GHCR desde main y etiquetas
 #   package     zip del código
-#   pages       versión web en Cloudflare Pages con Terraform (análisis en el navegador, sin IA) desde main
+#   pages       versión web en GitHub Pages (análisis en el navegador, sin IA) desde main
 #   release     release de GitHub al subir una etiqueta vX.Y.Z
 #
 # Solo usa acciones oficiales de GitHub (actions/*, github/*): nada de terceros con acceso a los secretos.
@@ -185,24 +185,23 @@ jobs:
           if [ "$GITHUB_REF" = refs/heads/main ]; then docker tag "$IMAGE:${GITHUB_SHA::7}" "$IMAGE:latest" && docker push "$IMAGE:latest"; fi
           if [ "$GITHUB_REF_TYPE" = tag ]; then docker tag "$IMAGE:${GITHUB_SHA::7}" "$IMAGE:$GITHUB_REF_NAME" && docker push "$IMAGE:$GITHUB_REF_NAME"; fi
 
-  # Demo en Cloudflare Pages, con la infraestructura en Terraform (como el CV).
-  # Sin las credenciales configuradas solo genera la demo y no despliega nada.
+  # Demo en GitHub Pages: sin infraestructura propia ni secretos. Hay que elegir una vez
+  # Settings > Pages > Source: "GitHub Actions". El entorno github-pages solo acepta main.
   pages:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: [lint, bundle, test, self-scan]
     timeout-minutes: 15
-    concurrency: pages
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     permissions:
       contents: read
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_CLOUD_ORGANIZATION: ${{ vars.TF_CLOUD_ORGANIZATION }}
-      TF_WORKSPACE: ominous-security
-      TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
-      TF_IN_AUTOMATION: "1"
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -212,31 +211,11 @@ jobs:
           node-version: 22
       - name: Generar la demo
         run: node scripts/build-site.js dist
-      - name: Comprobar credenciales
-        id: cf
-        run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$TF_TOKEN_app_terraform_io" ] || [ -z "$TF_CLOUD_ORGANIZATION" ]; then
-            echo "Faltan credenciales de Cloudflare o HCP Terraform: solo se genera la demo." >> "$GITHUB_STEP_SUMMARY"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          else echo "ready=true" >> "$GITHUB_OUTPUT"; fi
-      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        if: steps.cf.outputs.ready == 'true'
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          terraform_wrapper: false
-      - name: Aplicar la infraestructura
-        if: steps.cf.outputs.ready == 'true'
-        run: |
-          terraform -chdir=infra init -input=false
-          terraform -chdir=infra fmt -check
-          terraform -chdir=infra validate
-          terraform -chdir=infra apply -input=false -auto-approve -lock-timeout=60s
-      - name: Desplegar en Cloudflare Pages
-        if: steps.cf.outputs.ready == 'true'
-        run: |
-          npm ci --prefix tools/deploy --no-audit --no-fund
-          PROJECT=$(terraform -chdir=infra output -raw project_name)
-          tools/deploy/node_modules/.bin/wrangler pages deploy dist --project-name "$PROJECT" --branch main | tee out.txt
-          echo "URL: $(terraform -chdir=infra output -raw url)" >> "$GITHUB_STEP_SUMMARY"
+          path: dist
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
   release:
     if: github.ref_type == 'tag'

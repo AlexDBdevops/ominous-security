@@ -5,7 +5,7 @@
 
 Herramienta web que analiza un repositorio de GitHub **antes de clonarlo**: vulnerabilidades del código, amenazas puestas a propósito por el autor y scripts ocultos o cifrados, que descifra sin ejecutarlos. Al final te deja clonarlo (con confirmación si algo no está en verde) y aplicar los arreglos automáticos, con el diff y un resumen de lo que ha cambiado.
 
-**Sin instalar nada:** https://ominous-security.pages.dev (análisis real en el navegador; los tres ejemplos usan datos simulados). Ver [Versión web](#versión-web).
+**Sin instalar nada:** https://alexdbdevops.github.io/ominous-security/ (análisis real en el navegador; los tres ejemplos usan datos simulados). Ver [Versión web](#versión-web).
 
 - [Inicio rápido](#inicio-rápido)
 - [Configuración](#configuración)
@@ -146,26 +146,13 @@ ominous.tudominio.com {
 
 Entra una vez en `https://ominous.tudominio.com/?token=<tu token>`. Caddy obtiene el certificado y la cookie se marca como `Secure`. Ten en cuenta que los clones se guardan en el disco del servidor, no en el tuyo.
 
-### Versión web en Cloudflare Pages (Terraform)
+### Versión web en GitHub Pages
 
-La misma página se publica en Cloudflare Pages en su edición **web**: analiza repos públicos de verdad desde el navegador de quien la visita, sin servidor y sin IA (ver [Versión web](#versión-web)). Usa el mismo montaje que el CV: Terraform crea el proyecto de Pages (`infra/main.tf`, estado en HCP Terraform) y Wrangler sube la web. En cada push a `main`, el job `pages` genera `dist/` con `npm run build:site`, aplica Terraform y despliega.
+La misma página se publica en GitHub Pages en su edición **web**: analiza repos públicos de verdad desde el navegador de quien la visita, sin servidor y sin IA (ver [Versión web](#versión-web)). No hace falta infraestructura propia ni secretos: en cada push a `main`, el job `pages` genera `dist/` con `npm run build:site` y lo publica con las acciones oficiales `upload-pages-artifact` y `deploy-pages`.
 
-`dist/_headers` lleva las mismas cabeceras de seguridad que el servidor, más HSTS. La CSP autoriza el script de la página por su hash, `analyzer.js` del propio dominio y conexiones solo a `api.github.com`, `raw.githubusercontent.com`, `api.osv.dev`, `api.securityscorecards.dev`, `api.deps.dev`, `api.first.org` (EPSS), `registry.npmjs.org`, `pypi.org` y `files.pythonhosted.org`. Todas son consultas de solo lectura a datos públicos, y el token de GitHub opcional solo va a `api.github.com`.
+GitHub Pages no deja poner cabeceras, así que la CSP va en un `<meta>` al principio de la página. Autoriza cada script por su hash, `analyzer.js` del propio dominio y conexiones solo a `api.github.com`, `raw.githubusercontent.com`, `api.osv.dev`, `api.securityscorecards.dev`, `api.deps.dev`, `api.first.org` (EPSS), `registry.npmjs.org`, `pypi.org` y `files.pythonhosted.org`. Todas son consultas de solo lectura a datos públicos, y el token de GitHub opcional solo va a `api.github.com`. Un `<meta>` no admite `frame-ancestors`, así que la página se queda oculta si otro sitio la mete en un marco (contra el clickjacking). HTTPS y HSTS los pone `github.io`.
 
-Configuración, una sola vez (puedes reutilizar el token y la organización del CV):
-
-1. En HCP Terraform, crea el workspace `ominous-security` en tu organización, con ejecución *Local* (Terraform se ejecuta en GitHub Actions y HCP solo guarda el estado).
-2. En Cloudflare, crea un token de API con el permiso *Account > Cloudflare Pages > Edit*.
-3. En GitHub, en *Settings > Secrets and variables > Actions*:
-
-| Tipo | Nombre | Valor |
-|---|---|---|
-| Secret | `CLOUDFLARE_API_TOKEN` | el token de Cloudflare |
-| Secret | `TF_API_TOKEN` | un token de HCP Terraform |
-| Variable | `CLOUDFLARE_ACCOUNT_ID` | el ID de tu cuenta de Cloudflare |
-| Variable | `TF_CLOUD_ORGANIZATION` | tu organización de HCP Terraform |
-
-Sin estas credenciales el job solo genera la demo y no despliega nada. La URL queda en `https://ominous-security.pages.dev` (o la que asigne Cloudflare si el nombre está ocupado; sale en el resumen del job). Para cambiar el nombre, edita `project_name` en `infra/main.tf`.
+Configuración, una sola vez: en GitHub, *Settings > Pages > Build and deployment > Source*: **GitHub Actions**. La URL queda en `https://alexdbdevops.github.io/ominous-security/` y sale en el resumen del job.
 
 Para probarla en local: `npm run build:site && npx serve dist`.
 
@@ -198,7 +185,7 @@ Una sola rama y una sola página con tres ediciones. Solo cambia una línea (`co
 | Edición | Dónde | Qué hace |
 |---|---|---|
 | `local` | servidor local (`npm start`, Docker) | todo: clon aislado, historial de git, submódulos, clonado con arreglos y revisión con Claude (tu cuenta Pro/Max o una clave) |
-| `web` | Cloudflare Pages | análisis real en el navegador, sin IA |
+| `web` | GitHub Pages | análisis real en el navegador, sin IA |
 | `web-ai` | artefacto de claude.ai | lo mismo que `web` más la revisión con Claude usando la cuenta de claude.ai de quien lo abre |
 
 En las ediciones web, `public/analyzer.js` (el mismo analizador de `lib/`, empaquetado con `npm run build:web`) corre en un Web Worker:
@@ -348,7 +335,7 @@ Los tests generan sus repos trampa en una carpeta temporal en cada ejecución (`
 | `audit` | `npm audit` |
 | `docker` | imagen con prueba de humo y escaneo Trivy; desde `main` y etiquetas se publica en `ghcr.io/alexdbdevops/ominous-security` |
 | `package` | zip del código como artefacto |
-| `pages` | versión web en Cloudflare Pages: Terraform y Wrangler (solo en `main`) |
+| `pages` | versión web en GitHub Pages (solo en `main`) |
 | `release` | release de GitHub al subir una etiqueta `vX.Y.Z` que coincida con `package.json` |
 
 `codeql.yml` pasa CodeQL cada semana y en cada PR, `update-data.yml` refresca cada semana los [datos que envejecen](#datos-que-se-actualizan-solos) con un PR, y Dependabot vigila npm, las acciones y la imagen base.
@@ -411,12 +398,10 @@ public/fonts/        fuentes autoalojadas (OFL)
 Dockerfile           imagen (usuario sin privilegios, tini, healthcheck)
 compose.yaml         despliegue local endurecido; compose.lan.yaml lo abre a tu red con token
 scripts/local.sh     construir y arrancar en local (local.ps1 en Windows)
-scripts/build-site.js versión web para Cloudflare Pages (dist/ con _headers)
+scripts/build-site.js versión web para GitHub Pages (dist/ con la CSP en un meta)
 scripts/build-web.js genera public/analyzer.js con esbuild
 scripts/update-data.js refresca data/ (KEV y paquetes populares)
 data/                datos que envejecen, actualizados cada semana por update-data.yml
-infra/main.tf        proyecto de Cloudflare Pages en Terraform
-tools/deploy/        Wrangler fijado a una versión exacta
 lib/page.js          interfaz y CSP de cada edición
 test/                tests con node --test
 ```

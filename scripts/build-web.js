@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Empaqueta lib/ para el navegador en public/analyzer.js (versión web en Cloudflare
+// Empaqueta lib/ para el navegador en public/analyzer.js (versión web en GitHub
 // Pages y artefactos). Los módulos de Node que usa el analizador se sustituyen por
 // equivalentes en web/shims: ficheros en memoria, zlib con fflate y crypto con @noble.
 // El resultado se versiona; `npm run build:web -- --check` falla si no está al día.
