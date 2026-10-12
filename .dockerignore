@@ -6,4 +6,4 @@ site
 coverage
 junit.xml
 *.zip
-.gitlab-ci.yml
+.github

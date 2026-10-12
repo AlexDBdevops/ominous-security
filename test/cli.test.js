@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { parseArgs, shouldFail, toCodeQuality } = require('../bin/ominous-scan');
+const { parseArgs, shouldFail, toCodeQuality, toSarif } = require('../bin/ominous-scan');
 const fx = require('./helpers/fixtures');
 
 const CLI = path.join(__dirname, '..', 'bin', 'ominous-scan.js');
@@ -34,6 +34,16 @@ test('toCodeQuality genera el formato de GitLab', () => {
   assert.equal(i.severity, 'critical');
   assert.deepEqual(i.location, { path: 'a.py', lines: { begin: 3 } });
   assert.match(i.fingerprint, /^[0-9a-f]{64}$/);
+});
+
+test('toSarif genera SARIF 2.1.0 para GitHub code scanning', () => {
+  const s = toSarif({ vulnerabilities: [{ kind: 'vuln', rule: 'py-yaml', severity: 'high', title: 'X', description: 'd', file: 'a.py', line: 3, fix: { text: 'f' } }], threats: [{ kind: 'threat', rule: 'curl-pipe', severity: 'critical', title: 'Y', file: 'b.sh', line: 1 }] });
+  assert.equal(s.version, '2.1.0');
+  const run = s.runs[0];
+  assert.deepEqual(run.tool.driver.rules.map((r) => r.id), ['py-yaml', 'curl-pipe']);
+  assert.equal(run.results[1].level, 'error');
+  assert.equal(run.tool.driver.rules[1].properties['security-severity'], '9.5');
+  assert.equal(run.results[0].locations[0].physicalLocation.region.startLine, 3);
 });
 
 test('CLI: repo limpio sale con 0 y repo trampa con 1', (t) => {

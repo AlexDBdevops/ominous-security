@@ -1,7 +1,7 @@
 # Ominous Security en contenedor.
-#   docker run --rm -p 127.0.0.1:8080:8080 -v ominous-clones:/data registry.gitlab.com/<grupo>/ominous-security
+#   docker run --rm -p 127.0.0.1:8080:8080 -v ominous-clones:/data ghcr.io/alexdbdevops/ominous-security
 # También sirve como escáner en CI:
-#   docker run --rm -v "$PWD:/src:ro" --entrypoint ominous-scan registry.gitlab.com/<grupo>/ominous-security /src
+#   docker run --rm -v "$PWD:/src:ro" --entrypoint ominous-scan ghcr.io/alexdbdevops/ominous-security /src
 
 FROM node:22-alpine
 RUN apk add --no-cache git tini \

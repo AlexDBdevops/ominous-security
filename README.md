@@ -53,10 +53,10 @@ Analiza una carpeta local sin servidor, útil en CI de cualquier proyecto:
 
 ```bash
 node bin/ominous-scan.js <carpeta> [--exclude ruta1,carpeta/] [--fail-on red|yellow|never] \
-     [--json informe.json] [--codequality gl-code-quality-report.json]
+     [--json informe.json] [--sarif ominous.sarif] [--codequality gl-code-quality-report.json]
 ```
 
-Sale con 0 si el veredicto no llega a `--fail-on` (por defecto `red`), 1 si llega y 2 si hay un error. `--codequality` genera el formato de GitLab para que los hallazgos salgan en la merge request. `OMINOUS_OFFLINE=1` evita la consulta a OSV.dev.
+Sale con 0 si el veredicto no llega a `--fail-on` (por defecto `red`), 1 si llega y 2 si hay un error. `--sarif` genera el formato de GitHub code scanning y `--codequality` el de GitLab. `OMINOUS_OFFLINE=1` evita la consulta a OSV.dev.
 
 ## Docker
 
@@ -67,26 +67,30 @@ docker run --rm -p 127.0.0.1:8080:8080 -v ominous-clones:/data ominous-security
 
 Publica el puerto solo en `127.0.0.1`. Los clones quedan en el volumen `ominous-clones`. La imagen incluye el escáner: `docker run --rm -v "$PWD:/src:ro" --entrypoint ominous-scan ominous-security /src`.
 
-## Desarrollo y CI/CD (GitLab)
+## Desarrollo y CI/CD (GitHub Actions)
 
 ```bash
 npm run lint        # sintaxis, 'use strict', JSON y caracteres invisibles
-npm test            # 30 tests con node --test (Node 20+)
+npm test            # tests con node --test (Node 20+)
 npm run scan:self   # la herramienta se analiza a sí misma
 ```
 
 Los tests generan sus repos trampa en una carpeta temporal en cada ejecución (`test/helpers/fixtures.js`), así que el repo no contiene ficheros que VS Code, pytest o Claude Code pudieran ejecutar al abrirlo.
 
-El pipeline (`.gitlab-ci.yml`) tiene estas fases:
+`.github/workflows/ci.yml` corre en cada push y pull request:
 
-| Fase | Jobs |
+| Job | Qué hace |
 |---|---|
-| lint | `lint` |
-| test | tests en Node 20 y 24, `test:coverage` en Node 22 (JUnit y % de cobertura), `self-scan` (informe Code Quality en la MR), SAST y detección de secretos de GitLab, `npm-audit` |
-| build | `package` (zip del código), `docker` (imagen en el Container Registry con prueba de humo; en `main`, en etiquetas y en MRs que tocan el Dockerfile o las dependencias) |
-| scan | `container_scanning` de la imagen |
-| deploy | `pages`: la interfaz en modo demo en GitLab Pages, para probarla desde el móvil |
-| release | al crear una etiqueta `vX.Y.Z` que coincida con la versión de `package.json` |
+| `lint` | `npm run lint` |
+| `test` | tests en Node 20, 22 y 24; en 22 con cobertura (resumen del job) y JUnit |
+| `self-scan` | la herramienta se analiza a sí misma; en repos públicos los hallazgos salen en *Security > Code scanning* (SARIF) |
+| `audit` | `npm audit` |
+| `docker` | imagen con prueba de humo y escaneo Trivy; desde `main` y etiquetas se publica en `ghcr.io/<usuario>/ominous-security` |
+| `package` | zip del código como artefacto |
+| `pages` | la interfaz en modo demo en GitHub Pages, para probarla desde el móvil (requiere *Settings > Pages > Source: GitHub Actions*) |
+| `release` | al subir una etiqueta `vX.Y.Z` que coincida con la versión de `package.json` |
+
+Además, `codeql.yml` pasa CodeQL cada semana y en cada PR (repos públicos) y Dependabot vigila npm, las acciones y la imagen base. El workflow solo usa acciones oficiales de GitHub.
 
 Para publicar una versión: sube la versión en `package.json`, haz commit y `git tag v1.0.1 && git push --tags`.
 

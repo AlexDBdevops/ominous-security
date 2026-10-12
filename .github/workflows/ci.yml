@@ -1,0 +1,206 @@
+# CI/CD de Ominous Security
+#
+#   lint        sintaxis, 'use strict', JSON válido y sin caracteres invisibles/bidi
+#   test        tests en Node 20, 22 y 24 (JUnit y cobertura en 22)
+#   self-scan   la herramienta se analiza a sí misma; hallazgos en Security > Code scanning
+#   audit       npm audit de las dependencias
+#   docker      imagen con prueba de humo y escaneo Trivy; se publica en GHCR desde main y etiquetas
+#   package     zip del código
+#   pages       demo en GitHub Pages (modo demo, sin servidor) desde main
+#   release     release de GitHub al subir una etiqueta vX.Y.Z
+#
+# Solo usa acciones oficiales de GitHub (actions/*, github/*): nada de terceros con acceso a los secretos.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  OMINOUS_OFFLINE: '1'   # los tests no dependen de OSV.dev
+  EXCLUDE: lib/rules.js,lib/decoder.js,lib/extra.js,public/index.html,README.md,test/,node_modules/
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run lint
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Tests
+        if: matrix.node != 22
+        run: npm test
+      - name: Tests con cobertura
+        if: matrix.node == 22
+        run: |
+          npm run test:ci | tee test-output.txt
+          {
+            echo '### Cobertura'
+            echo '```'
+            grep -E 'file +\||all files' test-output.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.node == 22
+        with:
+          name: junit
+          path: junit.xml
+
+  # La herramienta se analiza a sí misma. Las firmas de ataques (rules.js, la demo,
+  # el README) se excluyen igual que un antivirus excluye su base de firmas.
+  self-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      OMINOUS_OFFLINE: '0'   # aquí sí consulta OSV.dev para las dependencias
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Ominous Security sobre su propio código
+        run: node bin/ominous-scan.js . --exclude "$EXCLUDE" --fail-on red --sarif ominous.sarif --json ominous-report.json
+      - name: Subir hallazgos a Code scanning
+        if: always() && github.event.repository.visibility == 'public'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ominous.sarif
+          category: ominous-security
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ominous-report
+          path: ominous-report.json
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm audit --audit-level=high --include=optional
+
+  package:
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zip del código
+        run: |
+          NAME="ominous-security-${GITHUB_REF_NAME//\//-}"
+          [ "$GITHUB_REF_TYPE" = tag ] || NAME="ominous-security-${GITHUB_SHA::7}"
+          git archive --format=zip --prefix=ominous-security/ -o "$NAME.zip" HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: ominous-security-*.zip
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagen
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build --pull -t "$IMAGE:${GITHUB_SHA::7}" .
+      - name: Prueba de humo
+        run: |
+          docker run -d --name smoke "$IMAGE:${GITHUB_SHA::7}"
+          for i in $(seq 1 20); do docker exec smoke wget -qO- --header "Host: localhost:8080" http://127.0.0.1:8080/api/health && break; sleep 1; done
+          docker exec smoke wget -qO- --header "Host: localhost:8080" http://127.0.0.1:8080/api/health | grep -q '"ok":true'
+          docker exec -e OMINOUS_OFFLINE=1 smoke ominous-scan /app --exclude lib/rules.js,lib/decoder.js,lib/extra.js,public/index.html --fail-on red
+          docker rm -f smoke
+      - name: Escaneo de vulnerabilidades de la imagen (Trivy)
+        run: |
+          # Se le pasa la imagen exportada en un tar, sin darle acceso al socket de Docker.
+          docker save -o image.tar "$IMAGE:${GITHUB_SHA::7}"
+          docker run --rm -v "$PWD/image.tar:/image.tar:ro" aquasec/trivy:0.58.1 image \
+            --input /image.tar --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --no-progress
+          rm image.tar
+      - name: Publicar en GitHub Container Registry
+        if: github.event_name == 'push'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMAGE:${GITHUB_SHA::7}"
+          if [ "$GITHUB_REF" = refs/heads/main ]; then docker tag "$IMAGE:${GITHUB_SHA::7}" "$IMAGE:latest" && docker push "$IMAGE:latest"; fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then docker tag "$IMAGE:${GITHUB_SHA::7}" "$IMAGE:$GITHUB_REF_NAME" && docker push "$IMAGE:$GITHUB_REF_NAME"; fi
+
+  pages:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/build-pages.js site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  release:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    needs: [package, docker, self-scan]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: package
+      - name: Comprobar que la etiqueta coincide con package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          [ "$GITHUB_REF_NAME" = "v$VERSION" ] || { echo "La etiqueta $GITHUB_REF_NAME no coincide con la versión $VERSION de package.json"; exit 1; }
+      - name: Crear release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:$GITHUB_REF_NAME"
+          gh release create "$GITHUB_REF_NAME" ominous-security-*.zip --generate-notes \
+            --title "Ominous Security $GITHUB_REF_NAME" --notes "Imagen Docker: \`docker pull $IMAGE\`"

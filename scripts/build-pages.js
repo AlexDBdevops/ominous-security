@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Genera la demo estática para GitLab Pages: la misma interfaz que sirve
+// Genera la demo estática para GitHub Pages: la misma interfaz que sirve
 // server.js, envuelta en un documento completo. Sin servidor detrás, la
 // página detecta que /api/health no responde y entra en modo demo.
 const fs = require('fs');
