@@ -85,6 +85,7 @@ Todo se configura con variables de entorno. Con Docker, ponlas en un fichero `.e
 | `OMINOUS_CODEQL_TIMEOUT_MS` | `480000` | Tiempo máximo de CodeQL por lenguaje |
 | `OMINOUS_WATCH` | — | `0` desactiva la [vigilancia de tus clones](#vigilancia-de-tus-clones) |
 | `OMINOUS_WATCH_HOURS` | `24` | Cada cuántas horas se comprueban los clones |
+| `OMINOUS_WATCH_TIMEOUT_MS` | `600000` | Tiempo máximo de cada comprobación de los clones; lo que no da tiempo a comprobar queda como saltado |
 
 ## Despliegue
 
@@ -275,7 +276,7 @@ Lo que no está en el código que descargas, pero te afecta igual:
 
 ## Vigilancia de tus clones
 
-En el servidor local, cada repo que clonas desde la app queda apuntado con los avisos que ya tenían sus dependencias. Al arrancar y luego cada 24 horas (`OMINOUS_WATCH_HOURS`), o con el botón **Comprobar ahora**, se vuelven a leer sus ficheros de dependencias, se consultan en OSV.dev y aparece en la sección **Vigilancia de tus clones** cualquier vulnerabilidad publicada después del clon, una sola vez y marcada si ya se está explotando.
+En el servidor local, cada repo que clonas desde la app queda apuntado con los avisos que ya tenían sus dependencias. Al arrancar y luego cada 24 horas (`OMINOUS_WATCH_HOURS`), o con el botón **Comprobar ahora**, se vuelven a leer sus ficheros de dependencias, se consultan en OSV.dev y aparece en la sección **Vigilancia de tus clones** cualquier vulnerabilidad publicada después del clon, una sola vez y marcada si ya se está explotando. La comprobación corre en un hilo aparte, así que no frena la app, y se corta a los 10 minutos (`OMINOUS_WATCH_TIMEOUT_MS`): los repos que no dio tiempo a revisar aparecen como saltados y conservan sus avisos anteriores.
 
 Solo se leen los ficheros de dependencias del clon (sin `node_modules` ni enlaces que salgan de `CLONE_DIR`); nada se ejecuta. La lista está en `CLONE_DIR/.ominous/watch.json`, con permisos solo para tu usuario, y a OSV.dev solo van nombres y versiones de paquetes, igual que en el análisis. `OMINOUS_WATCH=0` la desactiva.
 
