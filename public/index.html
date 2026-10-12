@@ -266,6 +266,9 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
 .explain p { margin: 2px 0 0; }
 .explain .lbl2 { display: block; margin-top: 8px; color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
 .explain a { color: var(--accent); }
+.explain .flow { margin: 4px 0 0; padding-left: 22px; font-size: 12.5px; }
+.explain .flow li { margin-top: 2px; overflow-wrap: anywhere; }
+.explain .flow code { color: var(--muted); }
 .adv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 8px; background: var(--panel-2); min-width: 0; }
 .adv-h { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
 .adv-h code { font-family: var(--f-mono); font-size: 12.5px; }
@@ -686,6 +689,10 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       d.append(el('p', { class: 'fam' }, ex.name, ex.cwe ? [' · ', extLink(ex.cwe.url, ex.cwe.id)] : null));
       if (ex.why) d.append(el('span', { class: 'lbl2' }, 'Por qué importa'), el('p', {}, ex.why));
       if (ex.check) d.append(el('span', { class: 'lbl2' }, 'Qué comprobar'), el('p', {}, ex.check));
+      if (Array.isArray(ex.flow) && ex.flow.length) {
+        d.append(el('span', { class: 'lbl2' }, 'Recorrido del dato'),
+          el('ol', { class: 'flow' }, ex.flow.map((s, i) => el('li', {}, el('code', {}, `${s.file}:${s.line}`), ' ', s.text || '', i === 0 ? ' (entra)' : i === ex.flow.length - 1 ? ' (llega)' : ''))));
+      }
     }
     if (adv.length) {
       d.append(el('span', { class: 'lbl2' }, 'Avisos de seguridad (OSV.dev)'));
@@ -1297,14 +1304,15 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     vuln: {
       repo: { owner: 'demo-lab', name: 'flask-inventory', branch: 'main', commit: 'b81d0c4e9a2f7731c6e2', meta: { description: 'API de inventario en Flask (repo de ejemplo)' } },
       stats: { files: 87, bytes: 412000, truncated: false },
-      coverage: [{ label: 'Código del último commit', status: 'ok', detail: '87 ficheros' }, { label: 'Dependencias (OSV.dev)', status: 'ok', detail: '14 de 14 con versión exacta consultadas' }, { label: 'Historial de git', status: 'ok', detail: '212 commits revisados' }, { label: 'Releases de GitHub', status: 'ok', detail: 'sin binarios publicados' }],
-      summary: { vulnStatus: 'yellow', threatStatus: 'green', overall: 'yellow', fixable: 7, autoFixable: 4, notFixable: 2, hiddenPayloads: 0 },
+      coverage: [{ label: 'Código del último commit', status: 'ok', detail: '87 ficheros' }, { label: 'Dependencias (OSV.dev)', status: 'ok', detail: '14 de 14 con versión exacta consultadas' }, { label: 'Historial de git', status: 'ok', detail: '212 commits revisados' }, { label: 'CodeQL (recorridos de datos)', status: 'ok', detail: '1 hallazgo · Python (simulado)' }, { label: 'Releases de GitHub', status: 'ok', detail: 'sin binarios publicados' }],
+      summary: { vulnStatus: 'yellow', threatStatus: 'green', overall: 'yellow', fixable: 7, autoFixable: 4, notFixable: 3, hiddenPayloads: 0 },
       trust: [{ label: 'Estrellas', value: 312, ok: true }, { label: 'Antigüedad del repo', value: '1460 días', ok: true }, { label: 'Antigüedad de la cuenta del autor', value: '2900 días', ok: true }, { label: 'Licencia', value: 'ninguna', ok: false }, { label: 'Archivado', value: 'no', ok: true }],
       dependencies: { total: 14, checked: 14, vulnerable: 2, osvAvailable: true },
       vulnerabilities: [
         { kind: 'vuln', rule: 'py-flaskdebug', severity: 'high', title: 'Flask en modo debug', description: 'El depurador de Werkzeug permite ejecutar código desde el navegador.', file: 'app.py', line: 88, snippet: "app.run(host='0.0.0.0', port=5000, debug=True)", fixable: true, fix: { text: 'Poner debug=False.', auto: true } },
         { kind: 'vuln', rule: 'py-yaml', severity: 'high', title: 'yaml.load inseguro', description: 'yaml.load con el loader por defecto puede ejecutar código al leer un YAML.', file: 'inventory/config.py', line: 14, snippet: 'cfg = yaml.load(open(path))', fixable: true, fix: { text: 'Cambiar a yaml.safe_load().', auto: true } },
         { kind: 'vuln', rule: 'py-sqli', severity: 'high', title: 'SQL construido con formato de cadenas', description: 'Inyección SQL.', file: 'inventory/db.py', line: 42, snippet: 'cur.execute(f"SELECT * FROM items WHERE sku = \'{sku}\'")', fixable: true, fix: { text: 'Usar parámetros: cursor.execute("... %s", (valor,)).', auto: false } },
+        { kind: 'vuln', rule: 'ext-codeql', severity: 'critical', title: 'SQL query built from user-controlled sources [CodeQL]', description: 'This SQL query depends on a user-provided value. Recorrido de 5 pasos: entra en inventory/routes.py:27 y llega a inventory/db.py:42. (Simulado: CodeQL solo corre en el servidor local.)', file: 'inventory/db.py', line: 42, fixable: false, notFixableReason: 'Hay que validar o escapar el dato en algún punto del recorrido; depende de la lógica del proyecto.', explain: { cwe: { id: 'CWE-89', url: 'https://cwe.mitre.org/data/definitions/89.html' }, name: 'CodeQL · py/sql-injection (Python)', why: 'Building a SQL query from user-controlled sources is vulnerable to insertion of malicious SQL code by the user.', check: 'Sigue el recorrido: si en algún paso el dato se valida o se escapa, puede ser un falso positivo.', flow: [{ file: 'inventory/routes.py', line: 27, text: 'request.args' }, { file: 'inventory/routes.py', line: 27, text: 'sku' }, { file: 'inventory/routes.py', line: 31, text: 'find_item(sku)' }, { file: 'inventory/db.py', line: 40, text: 'sku' }, { file: 'inventory/db.py', line: 42, text: 'f-string' }] } },
         { kind: 'vuln', rule: 'py-shell', severity: 'high', title: 'subprocess con shell=True', description: 'Permite inyección de comandos si el comando incluye datos externos.', file: 'inventory/export.py', line: 23, snippet: 'subprocess.run(f"zip -r {name}.zip exports/", shell=True)', fixable: true, fix: { text: 'Pasar el comando como lista y quitar shell=True (shlex.split si hace falta).', auto: false } },
         { kind: 'vuln', rule: 'py-tls', severity: 'high', title: 'Verificación TLS desactivada (verify=False)', description: 'Peticiones HTTPS sin verificar certificado.', file: 'inventory/sync.py', line: 31, snippet: 'requests.post(SUPPLIER_URL, json=payload, verify=False)', fixable: true, fix: { text: 'Poner verify=True.', auto: true } },
         { kind: 'vuln', rule: 'py-pickle', severity: 'high', title: 'Deserialización con pickle', description: 'pickle ejecuta código al cargar datos. Peligroso si el fichero no es de confianza.', file: 'inventory/cache.py', line: 19, snippet: 'return pickle.loads(redis.get(key))', fixable: false, notFixableReason: 'Cambiar el formato (JSON, safetensors) afecta a los datos existentes; requiere decisión del autor.' },
