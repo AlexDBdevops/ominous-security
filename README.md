@@ -203,7 +203,7 @@ Si GitHub no encuentra el repo, la página explica los motivos posibles: la cuen
 Límites de la versión web frente al servidor local:
 
 - Sin historial de git ni submódulos (se marcan como no revisados).
-- Sin iniciar sesión, la API de GitHub permite 60 consultas por hora por IP. Cada análisis usa unas 5. Los ficheros desde `raw.githubusercontent.com` no cuentan.
+- Sin iniciar sesión, la API de GitHub permite 60 consultas por hora por IP. Cada análisis usa unas 5. Los ficheros desde `raw.githubusercontent.com` no cuentan. Con un token de GitHub opcional (fine-grained y sin permisos) sube a 5000: solo se envía a `api.github.com`, vive en la memoria del worker durante el análisis y nunca se guarda.
 - Hasta 3000 ficheros, 2 MB por fichero y 60 MB en total.
 - Si OSV.dev o Scorecard no responden al navegador, salen como "no revisado" en lugar de fallar.
 
@@ -328,7 +328,7 @@ Al autoescanearse se excluyen `lib/rules.js`, `lib/decoder.js`, `lib/extra.js`, 
 | `El destino tiene que estar dentro de…` | El campo de destino admite solo un nombre de carpeta, dentro de `CLONE_DIR` |
 | Reputación, Releases o Scorecard en gris | La API de GitHub ha alcanzado el límite (define `GITHUB_TOKEN`) o el proyecto no tiene Scorecard publicado |
 | `Dependencias (OSV.dev): no se pudo consultar` | Sin conexión con api.osv.dev o `OMINOUS_OFFLINE=1` |
-| Versión web: `Has llegado al límite de consultas a GitHub` | 60 consultas por hora por IP sin sesión. Espera a la hora indicada o usa el servidor local con `GITHUB_TOKEN` |
+| Versión web: `Has llegado al límite de consultas a GitHub` | 60 consultas por hora por IP sin sesión. Espera a la hora indicada, pon un token en «Token de GitHub (opcional)» o usa el servidor local con `GITHUB_TOKEN` |
 | Versión web: `No se pudo conectar con GitHub` dentro de claude.ai | El visor de artefactos puede bloquear conexiones externas. Abre la web publicada o el servidor local |
 | `No se encuentra Claude Code` al conectar | Instálalo en el mismo equipo que la app (`npm install -g @anthropic-ai/claude-code`) o indica la ruta con `OMINOUS_CLAUDE_BIN`. Dentro de Docker no está disponible |
 | `Claude Code está instalado pero sin sesión` | Ejecuta `claude` en una terminal e inicia sesión con tu cuenta Pro o Max |

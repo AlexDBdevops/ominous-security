@@ -273,6 +273,9 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
 .adv .det { color: var(--muted); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .err ul { margin: 6px 0 0; padding-left: 18px; color: var(--fg); }
 .err .hint { margin: 8px 0 0; color: var(--fg); }
+.ghtok { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.ghtok summary { cursor: pointer; }
+.ghtok input { display: block; width: 100%; margin: 8px 0 4px; background: var(--code-bg); border: 1px solid var(--line); color: var(--fg); border-radius: 8px; padding: 9px 10px; font-family: var(--f-mono); font-size: 13px; box-sizing: border-box; }
 .cmd { font-family: var(--f-mono); font-size: 12.5px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
 
 @media (max-width: 520px) {
@@ -316,6 +319,11 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       <button id="scanBtn" class="btn" type="submit">Analizar</button>
     </form>
     <div class="examples" id="examples" hidden><span>Ejemplos de la demo:</span></div>
+    <details class="ghtok" id="ghTok" hidden>
+      <summary>Token de GitHub (opcional)</summary>
+      <input id="ghTokIn" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…" aria-label="Token de GitHub">
+      <small>Sube el límite de 60 a 5000 consultas por hora. Crea un token fine-grained sin ningún permiso (para repos públicos no hace falta). Solo se envía a api.github.com, se queda en la memoria de esta pestaña y se borra al cerrarla.</small>
+    </details>
     <p class="note" id="modeNote"></p>
     <div id="scanErr" class="err" hidden></div>
   </div>
@@ -431,6 +439,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         + (EDITION === 'web-ai' ? ' La revisión con Claude usa tu cuenta de claude.ai.' : '') + ' Los tres ejemplos usan datos simulados.';
       $('#examples').firstElementChild.textContent = 'Ejemplos simulados:';
       if (EDITION === 'web') $('#connBtn').hidden = true;
+      $('#ghTok').hidden = false;
       addExamples();
       return;
     }
@@ -575,7 +584,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   function webAnalyze(url) {
     if (engine) engine.kill();
     try { engine = workerEngine(); } catch { engine = pageEngine(); }
-    return engine.send({ type: 'analyze', url }, progressLine);
+    return engine.send({ type: 'analyze', url, token: $('#ghTokIn').value.trim() || null }, progressLine);
   }
 
   $('#scanForm').addEventListener('submit', (e) => { e.preventDefault(); run($('#url').value.trim()); });

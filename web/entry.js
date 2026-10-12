@@ -15,10 +15,10 @@ const { fetchRepo, GhError } = require('./github');
 
 let last = null; // { root, files tocados por arreglos }
 
-async function analyze(url, log = () => {}) {
+async function analyze(url, log = () => {}, token = null) {
   const ref = parseGithubUrl(url);
   if (!ref) throw new GhError('URL no válida. Usa algo como https://github.com/usuario/repositorio', { status: 400 });
-  const got = await fetchRepo(ref, { log });
+  const got = await fetchRepo(ref, { log, token });
   const extra = { vulns: [], threats: [], coverage: [] };
   movedPass(ref, got.meta, extra);
   scorecardCoverage(got.meta, extra);
@@ -97,7 +97,7 @@ function errInfo(e) {
 // Mismo protocolo en el worker y en la página: { type, url | findings } → { log } | { result } | { error }.
 async function handle(msg, post) {
   try {
-    if (msg.type === 'analyze') post({ result: await analyze(msg.url, (m) => post({ log: m })) });
+    if (msg.type === 'analyze') post({ result: await analyze(msg.url, (m) => post({ log: m }), msg.token || null) });
     else if (msg.type === 'patch') post({ result: patch(msg.findings || []) });
     else post({ error: { message: 'Mensaje desconocido' } });
   } catch (e) {

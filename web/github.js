@@ -24,10 +24,17 @@ class GhError extends Error {
 
 const enc = (p) => p.split('/').map(encodeURIComponent).join('/');
 
+// Token opcional de GitHub (solo lectura) que da quien usa la página: vive en la memoria
+// del worker durante el análisis y solo se envía a api.github.com.
+let TOKEN = null;
+const TOKEN_RE = /^(gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{50,255})$/;
+
 async function get(url, { accept = 'application/vnd.github+json', timeout = 15000, f = fetch } = {}) {
   let r;
+  const headers = { accept };
+  if (TOKEN && url.startsWith('https://api.github.com/')) headers.authorization = `Bearer ${TOKEN}`;
   try {
-    r = await f(url, { headers: { accept }, signal: AbortSignal.timeout(timeout), credentials: 'omit', referrerPolicy: 'no-referrer' });
+    r = await f(url, { headers, signal: AbortSignal.timeout(timeout), credentials: 'omit', referrerPolicy: 'no-referrer' });
   } catch (e) {
     throw new GhError('No se pudo conectar con GitHub.', {
       reasons: [
@@ -49,10 +56,10 @@ function rateError(r) {
   return new GhError('Has llegado al límite de consultas a GitHub.', {
     status: 429,
     reasons: [
-      'Sin iniciar sesión, GitHub permite 60 consultas por hora a cada dirección IP. Cada análisis usa unas 5, y la IP puede ser compartida (red de empresa, universidad, VPN).',
+      TOKEN ? 'Con token, GitHub permite 5000 consultas por hora; las has gastado.' : 'Sin iniciar sesión, GitHub permite 60 consultas por hora a cada dirección IP. Cada análisis usa unas 5, y la IP puede ser compartida (red de empresa, universidad, VPN).',
       at ? `El límite se renueva a las ${at}.` : 'El límite se renueva en menos de una hora.',
     ],
-    hint: 'Si lo necesitas sin límites, usa el servidor local: puede usar tu token de GitHub.',
+    hint: TOKEN ? null : 'Puedes subirlo a 5000 por hora con un token de GitHub de solo lectura (opción «Token de GitHub» bajo la URL), o usar el servidor local.',
   });
 }
 
@@ -90,6 +97,9 @@ async function repoError(status, json, owner, repo, f) {
       ],
     });
   }
+  if (status === 401) {
+    return new GhError('GitHub rechaza el token.', { status, reasons: ['El token ha caducado, se ha revocado o está mal copiado. Bórralo o crea otro.'] });
+  }
   if (status === 451) {
     return new GhError(`GitHub ha bloqueado ${name} por motivos legales.`, { status, reasons: ['Suele ser una retirada por DMCA o una orden judicial. El contenido no está disponible.'] });
   }
@@ -106,7 +116,13 @@ async function pool(items, n, fn) {
 }
 
 // Descarga el repo al sistema de ficheros en memoria y devuelve lo que necesita el análisis.
-async function fetchRepo(ref, { log = () => {}, f = fetch } = {}) {
+async function fetchRepo(ref, { log = () => {}, f = fetch, token = null } = {}) {
+  if (token && !TOKEN_RE.test(token)) throw new GhError('El token de GitHub no tiene un formato válido.', { status: 400, reasons: ['Debe empezar por github_pat_ (fine-grained) o ghp_ (clásico). Créalo en GitHub > Settings > Developer settings, sin ningún permiso: para repos públicos no hace falta.'] });
+  TOKEN = token || null;
+  try { return await fetchRepoInner(ref, { log, f }); } finally { TOKEN = null; }
+}
+
+async function fetchRepoInner(ref, { log, f }) {
   const { owner, repo } = ref;
   const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   log('Consultando el repositorio en GitHub…');

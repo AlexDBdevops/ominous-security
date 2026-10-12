@@ -184,3 +184,21 @@ test('web: el parche respeta ficheros sin salto de línea final', (t) => {
   execFileSync('git', ['apply', 'p.diff'], { cwd: dir, stdio: 'pipe' });
   assert.equal(fs.readFileSync(path.join(dir, 'f.txt'), 'utf8'), 'uno\ndos\ntres\nCUATRO');
 });
+
+test('web: el token de GitHub solo va a api.github.com y se valida', async (t) => {
+  const dir = fx.cleanRepo();
+  t.after(() => fx.rm(dir));
+  const seen = [];
+  const inner = fakeGithub(dir);
+  const om = loadBundle(async (url, opts) => { seen.push([new URL(url).hostname, (opts.headers || {}).authorization || null]); return inner(url, opts); });
+  const tok = `github_pat_${'A'.repeat(60)}`;
+  const r = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', token: tok });
+  assert.ok(r.result);
+  for (const [host, auth] of seen) assert.equal(auth, host === 'api.github.com' ? `Bearer ${tok}` : null, host);
+  const bad = (await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', token: 'hola' })).error;
+  assert.equal(bad.status, 400);
+  assert.ok(!JSON.stringify(bad).includes(tok));
+  seen.length = 0;
+  await call(om, { type: 'analyze', url: 'https://github.com/acme/tool' });
+  assert.ok(seen.every(([, auth]) => auth === null), 'sin token en el análisis siguiente');
+});
