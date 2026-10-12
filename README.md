@@ -138,9 +138,28 @@ ominous.tudominio.com {
 
 Entra una vez en `https://ominous.tudominio.com/?token=<tu token>`. Caddy obtiene el certificado y la cookie se marca como `Secure`. Ten en cuenta que los clones se guardan en el disco del servidor, no en el tuyo.
 
-### Demo en GitHub Pages
+### Demo en Cloudflare Pages (Terraform)
 
-En cada push a `main`, el job `pages` publica la interfaz en modo demo, sin servidor detrás. Para activarlo la primera vez ve a *Settings > Pages > Build and deployment > Source* y elige *GitHub Actions*.
+La interfaz se publica en modo demo en Cloudflare Pages, con el mismo montaje que el CV: Terraform crea el proyecto de Pages (`infra/main.tf`, estado en HCP Terraform) y Wrangler sube la web. En cada push a `main`, el job `pages` genera `dist/` con `npm run build:site`, aplica Terraform y despliega. La web estática solo funciona en modo demo: analizar repos de verdad y clonarlos necesita el servidor local. La conexión con tu cuenta de claude.ai tampoco está disponible en Pages, solo en el artefacto de claude.ai.
+
+`dist/_headers` lleva las mismas cabeceras de seguridad que el servidor, con la CSP calculada a partir del hash del script, más HSTS.
+
+Configuración, una sola vez (puedes reutilizar el token y la organización del CV):
+
+1. En HCP Terraform, crea el workspace `ominous-security` en tu organización, con ejecución *Local* (Terraform se ejecuta en GitHub Actions y HCP solo guarda el estado).
+2. En Cloudflare, crea un token de API con el permiso *Account > Cloudflare Pages > Edit*.
+3. En GitHub, en *Settings > Secrets and variables > Actions*:
+
+| Tipo | Nombre | Valor |
+|---|---|---|
+| Secret | `CLOUDFLARE_API_TOKEN` | el token de Cloudflare |
+| Secret | `TF_API_TOKEN` | un token de HCP Terraform |
+| Variable | `CLOUDFLARE_ACCOUNT_ID` | el ID de tu cuenta de Cloudflare |
+| Variable | `TF_CLOUD_ORGANIZATION` | tu organización de HCP Terraform |
+
+Sin estas credenciales el job solo genera la demo y no despliega nada. La URL queda en `https://ominous-security.pages.dev` (o la que asigne Cloudflare si el nombre está ocupado; sale en el resumen del job). Para cambiar el nombre, edita `project_name` en `infra/main.tf`.
+
+Para probarla en local: `npm run build:site && npx serve dist`.
 
 ## Qué analiza
 
@@ -241,7 +260,7 @@ Los tests generan sus repos trampa en una carpeta temporal en cada ejecución (`
 | `audit` | `npm audit` |
 | `docker` | imagen con prueba de humo y escaneo Trivy; desde `main` y etiquetas se publica en `ghcr.io/alexdbdevops/ominous-security` |
 | `package` | zip del código como artefacto |
-| `pages` | demo en GitHub Pages |
+| `pages` | demo en Cloudflare Pages: Terraform y Wrangler (solo en `main`) |
 | `release` | release de GitHub al subir una etiqueta `vX.Y.Z` que coincida con `package.json` |
 
 `codeql.yml` pasa CodeQL cada semana y en cada PR, y Dependabot vigila npm, las acciones y la imagen base.
@@ -290,6 +309,10 @@ public/fonts/        fuentes autoalojadas (OFL)
 Dockerfile           imagen (usuario sin privilegios, tini, healthcheck)
 compose.yaml         despliegue local endurecido; compose.lan.yaml lo abre a tu red con token
 scripts/local.sh     construir y arrancar en local (local.ps1 en Windows)
+scripts/build-site.js demo estática para Cloudflare Pages (dist/ con _headers)
+infra/main.tf        proyecto de Cloudflare Pages en Terraform
+tools/deploy/        Wrangler fijado a una versión exacta
+lib/page.js          interfaz y CSP compartidas por el servidor y la demo
 test/                tests con node --test
 ```
 

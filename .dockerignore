@@ -9,3 +9,6 @@ junit.xml
 .github
 .ominous-token
 clones
+dist
+infra
+tools

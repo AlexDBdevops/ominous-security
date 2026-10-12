@@ -299,20 +299,10 @@ async function revert({ id }) {
 }
 
 // ---------- HTTP ----------
-const INDEX = path.join(__dirname, 'public', 'index.html');
 
-const FONTS = path.join(__dirname, 'public', 'fonts');
-
-// La página se lee una vez. Su script inline se autoriza por hash en la CSP, así que
-// cualquier script inyectado que no sea exactamente ese no se ejecuta.
-const PAGE_BODY = fs.readFileSync(INDEX, 'utf8');
-const SCRIPT_HASHES = [...PAGE_BODY.matchAll(/<script>([\s\S]*?)<\/script>/g)]
-  .map((m) => `'sha256-${crypto.createHash('sha256').update(m[1], 'utf8').digest('base64')}'`);
-const CSP = [
-  "default-src 'none'", `script-src ${SCRIPT_HASHES.join(' ')}`, "style-src 'unsafe-inline'",
-  "font-src 'self'", "img-src 'self' data:", "connect-src 'self'",
-  "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
-].join('; ');
+const page = require('./lib/page');
+const FONTS = path.join(page.PUBLIC, 'fonts');
+const CSP = page.CSP;
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-store',
   'x-frame-options': 'DENY', 'cross-origin-opener-policy': 'same-origin', 'cross-origin-resource-policy': 'same-origin',
@@ -381,8 +371,7 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
-      const page = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body>${PAGE_BODY}</body></html>`;
-      return send(res, 200, page, 'text/html; charset=utf-8');
+      return send(res, 200, page.HTML, 'text/html; charset=utf-8');
     }
     // Fuentes autoalojadas: solo los .woff2 de public/fonts, sin rutas.
     const fm = req.method === 'GET' && url.pathname.match(/^\/fonts\/([a-z0-9-]+\.woff2)$/);

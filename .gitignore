@@ -1,5 +1,4 @@
 node_modules/
-site/
 coverage/
 junit.xml
 gl-code-quality-report.json
@@ -10,3 +9,4 @@ ominous-report.json
 .env
 clones/
 .ominous-token
+dist/

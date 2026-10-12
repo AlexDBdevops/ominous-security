@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Wrangler (CLI de Cloudflare) fijado a una versión exacta para desplegar la demo en Pages; Dependabot propone las nuevas",
+  "dependencies": {
+    "wrangler": "3.114.17"
+  }
+}
