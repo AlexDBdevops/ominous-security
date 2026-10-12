@@ -70,10 +70,17 @@ test('servidor HTTP', async (t) => {
   await t.test('la CSP autoriza el script por hash y no carga nada de terceros', async () => {
     const r = await req('GET', '/', host);
     const csp = r.headers['content-security-policy'];
-    assert.match(csp, /script-src 'sha256-[A-Za-z0-9+/=]+'/);
+    assert.match(csp, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/);
+    assert.match(csp, /connect-src 'self'/);
     assert.ok(!/script-src[^;]*unsafe-inline/.test(csp), 'sin unsafe-inline en scripts');
     assert.ok(!/https?:/.test(csp), 'sin orígenes externos');
     assert.ok(!/fonts\.googleapis|fonts\.gstatic/.test(r.body));
+  });
+  await t.test('sirve el analizador del navegador como JavaScript', async () => {
+    const r = await req('GET', '/analyzer.js', host);
+    assert.equal(r.status, 200);
+    assert.match(r.headers['content-type'], /^text\/javascript/);
+    assert.equal(r.headers['x-content-type-options'], 'nosniff');
   });
   await t.test('sirve solo las fuentes locales', async () => {
     const ok = await req('GET', '/fonts/jetbrains-mono.woff2', host);

@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 'use strict';
-// Genera la demo estática para Cloudflare Pages: la misma interfaz que sirve
-// server.js, sus fuentes y un _headers con las mismas cabeceras de seguridad
-// (la CSP lleva el hash del script). Sin servidor detrás, la página detecta que
-// /api/health no responde y entra en modo demo.
+// Genera la versión web para Cloudflare Pages: la misma interfaz que sirve
+// server.js en su edición "web" (analiza repos públicos en el navegador, sin IA),
+// el analizador empaquetado, las fuentes y un _headers con las cabeceras de
+// seguridad (la CSP lleva el hash del script y solo deja conectar con GitHub,
+// OSV.dev y OpenSSF Scorecard).
+// Uso: node scripts/build-site.js [carpeta] [edición]   (edición: web por defecto)
 const fs = require('fs');
 const path = require('path');
 const page = require('../lib/page');
 
 const out = path.resolve(process.argv[2] || 'dist');
+const ed = page.edition(process.argv[3] || 'web');
 // Solo se borra una carpeta vacía o una demo generada antes (tiene _headers).
 if (fs.existsSync(out) && fs.readdirSync(out).length && !fs.existsSync(path.join(out, '_headers'))) {
   console.error(`${out} no está vacía y no parece una demo generada: no la borro.`);
@@ -16,7 +19,8 @@ if (fs.existsSync(out) && fs.readdirSync(out).length && !fs.existsSync(path.join
 }
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(path.join(out, 'fonts'), { recursive: true });
-fs.writeFileSync(path.join(out, 'index.html'), page.HTML);
+fs.writeFileSync(path.join(out, 'index.html'), ed.html);
+fs.copyFileSync(path.join(page.PUBLIC, 'analyzer.js'), path.join(out, 'analyzer.js'));
 for (const f of fs.readdirSync(path.join(page.PUBLIC, 'fonts'))) {
   fs.copyFileSync(path.join(page.PUBLIC, 'fonts', f), path.join(out, 'fonts', f));
 }
@@ -28,8 +32,8 @@ fs.writeFileSync(path.join(out, '_headers'), `/*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), usb=(), payment=(), interest-cohort=()
-  Content-Security-Policy: ${page.CSP}; upgrade-insecure-requests
+  Content-Security-Policy: ${ed.csp}; upgrade-insecure-requests
 /fonts/*
   Cache-Control: public, max-age=604800, immutable
 `);
-console.log(`Demo generada en ${out}`);
+console.log(`Edición ${ed.name} generada en ${out}`);

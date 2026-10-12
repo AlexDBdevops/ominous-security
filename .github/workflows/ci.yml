@@ -1,12 +1,13 @@
 # CI/CD de Ominous Security
 #
 #   lint        sintaxis, 'use strict', JSON válido y sin caracteres invisibles/bidi
+#   bundle      public/analyzer.js (versión web) al día con lib/ y web/
 #   test        tests en Node 20, 22 y 24 (JUnit y cobertura en 22)
 #   self-scan   la herramienta se analiza a sí misma; hallazgos en Security > Code scanning
 #   audit       npm audit de las dependencias
 #   docker      imagen con prueba de humo y escaneo Trivy; se publica en GHCR desde main y etiquetas
 #   package     zip del código
-#   pages       demo en GitHub Pages (modo demo, sin servidor) desde main
+#   pages       versión web en Cloudflare Pages con Terraform (análisis en el navegador, sin IA) desde main
 #   release     release de GitHub al subir una etiqueta vX.Y.Z
 #
 # Solo usa acciones oficiales de GitHub (actions/*, github/*): nada de terceros con acceso a los secretos.
@@ -29,7 +30,7 @@ concurrency:
 
 env:
   OMINOUS_OFFLINE: '1'   # los tests no dependen de OSV.dev
-  EXCLUDE: lib/rules.js,lib/decoder.js,lib/extra.js,public/index.html,README.md,test/,node_modules/
+  EXCLUDE: lib/rules.js,lib/decoder.js,lib/extra.js,public/index.html,public/analyzer.js,README.md,test/,node_modules/
 
 jobs:
   lint:
@@ -42,6 +43,20 @@ jobs:
         with:
           node-version: 22
       - run: npm run lint
+
+  # public/analyzer.js (versión web) se genera desde lib/ y web/ y se versiona:
+  # este paso falla si alguien cambia el analizador y no vuelve a generarlo.
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build:web -- --check
 
   test:
     runs-on: ubuntu-latest
@@ -175,7 +190,7 @@ jobs:
   pages:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
-    needs: [lint, test, self-scan]
+    needs: [lint, bundle, test, self-scan]
     timeout-minutes: 15
     concurrency: pages
     permissions:

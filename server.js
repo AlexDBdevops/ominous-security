@@ -16,6 +16,7 @@ const { scanHistory } = require('./lib/history');
 const { parseGitmodules } = require('./lib/extra');
 const ai = require('./lib/ai');
 const conn = require('./lib/connection');
+const { parseGithubUrl, repoMetaFrom, parseScorecard, releasePass, movedPass, scorecardCoverage } = require('./lib/github');
 const HISTORY_COMMITS = Number(process.env.HISTORY_COMMITS) || 300;
 const MAX_SUBMODULES = 8;
 const ANALYSIS_TIMEOUT = Number(process.env.ANALYSIS_TIMEOUT_MS) || 5 * 60 * 1000;
@@ -67,26 +68,6 @@ function git(args, opts = {}) {
   });
 }
 
-function parseGithubUrl(input) {
-  const s = String(input || '').trim()
-    .replace(/^git@github\.com:/i, 'https://github.com/')
-    .replace(/^(?!https?:\/\/)(github\.com\/)/i, 'https://$1');
-  let u;
-  try { u = new URL(s); } catch { return null; }
-  if (!/^(www\.)?github\.com$/i.test(u.hostname)) return null;
-  const parts = u.pathname.split('/').filter(Boolean);
-  if (parts.length < 2) return null;
-  const owner = parts[0];
-  const repo = parts[1].replace(/\.git$/i, '');
-  const ok = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
-  if (!ok.test(owner) || !/^[A-Za-z0-9._-]{1,100}$/.test(repo) || repo === '.' || repo === '..') return null;
-  let branch = null;
-  if (parts[2] === 'tree' && parts[3]) {
-    branch = decodeURIComponent(parts.slice(3).join('/'));
-    if (!/^[\w./-]{1,200}$/.test(branch) || branch.includes('..') || branch.startsWith('-')) return null;
-  }
-  return { owner, repo, branch, cloneUrl: `https://github.com/${owner}/${repo}.git` };
-}
 
 async function gh(pathname) {
   try {
@@ -104,23 +85,15 @@ async function scorecard(owner, repo) {
   try {
     const r = await fetch(`https://api.securityscorecards.dev/projects/github.com/${owner}/${repo}`, { headers: { 'user-agent': 'ominous-security' }, signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null;
-    const j = await r.json();
-    const weak = (j.checks || []).filter((c) => c.score >= 0 && c.score <= 3).map((c) => c.name);
-    return { score: j.score, date: j.date, weak: weak.slice(0, 8) };
+    return parseScorecard(await r.json());
   } catch { return null; }
 }
 
 async function repoMeta(owner, repo) {
   const r = await gh(`/repos/${owner}/${repo}`);
   if (!r) return null;
-  const [u, sc] = await Promise.all([gh(`/users/${owner}`), scorecard(owner, repo)]);
-  return {
-    full_name: r.full_name, description: r.description, stargazers_count: r.stargazers_count, forks_count: r.forks_count,
-    created_at: r.created_at, pushed_at: r.pushed_at, archived: r.archived, fork: r.fork, parent: r.parent && r.parent.full_name,
-    license: r.license && r.license.spdx_id !== 'NOASSERTION' ? r.license.spdx_id : null, default_branch: r.default_branch,
-    owner_type: r.owner && r.owner.type, owner_created_at: u && u.created_at, size_kb: r.size, scorecard: sc,
-    releases: ((await gh(`/repos/${owner}/${repo}/releases?per_page=5`)) || []).map((rel) => ({ tag: rel.tag_name, assets: (rel.assets || []).map((a) => a.name) })),
-  };
+  const [u, sc, rel] = await Promise.all([gh(`/users/${owner}`), scorecard(owner, repo), gh(`/repos/${owner}/${repo}/releases?per_page=5`)]);
+  return repoMetaFrom(r, u, sc, rel || []);
 }
 
 async function analyze(url) {
@@ -145,10 +118,8 @@ async function analyze(url) {
     const meta = await metaP;
     const log = (m) => console.log(`  [${ref.owner}/${ref.repo}] ${m}`);
     const extra = { vulns: [], threats: [], coverage: [] };
-    if (meta && meta.full_name && meta.full_name.toLowerCase() !== `${ref.owner}/${ref.repo}`.toLowerCase()) {
-      extra.threats.push({ kind: 'threat', rule: 'repo-moved', severity: 'low', title: 'El repositorio ha cambiado de nombre o de dueño', description: `Pediste ${ref.owner}/${ref.repo} y GitHub redirige a ${meta.full_name}. Comprueba que es el proyecto que buscas: si el nombre antiguo queda libre, otra persona puede registrarlo y servir código distinto en la misma URL (repojacking).`, file: null, line: null });
-    }
-    extra.coverage.push({ label: 'OpenSSF Scorecard', status: meta && meta.scorecard ? 'ok' : 'skip', detail: meta && meta.scorecard ? `${meta.scorecard.score}/10 (${String(meta.scorecard.date).slice(0, 10)})` : 'el proyecto no tiene puntuación publicada o no se pudo consultar' });
+    movedPass(ref, meta, extra);
+    scorecardCoverage(meta, extra);
     await historyPass(dir, extra, log);
     await submodulePass(fs.realpathSync(dir), tmp, ref, extra, log);
     releasePass(meta, extra);
@@ -214,13 +185,6 @@ async function submodulePass(root, tmp, ref, extra, log) {
   extra.coverage.push({ label: 'Submódulos', status: analyzed === subs.length ? 'ok' : 'partial', detail: `${analyzed} de ${subs.length} analizados${subs.length > MAX_SUBMODULES ? ` (máximo ${MAX_SUBMODULES})` : ''}` });
 }
 
-// Releases: los binarios publicados no están en el código y no se pueden revisar.
-function releasePass(meta, extra) {
-  if (!meta || !meta.releases) { extra.coverage.push({ label: 'Releases de GitHub', status: 'skip', detail: 'no se pudo consultar la API de GitHub' }); return; }
-  const bins = meta.releases.flatMap((r) => r.assets.filter((a) => /\.(exe|msi|dmg|pkg|appimage|deb|rpm|apk|zip|rar|7z|scr|bat)$/i.test(a)).map((a) => `${r.tag}/${a}`));
-  if (bins.length) extra.threats.push({ kind: 'threat', rule: 'release-binaries', severity: 'low', title: 'Releases con ejecutables o comprimidos', description: `Publica ${bins.length} fichero${bins.length > 1 ? 's' : ''} binario${bins.length > 1 ? 's' : ''} en releases. No se generan desde este código de forma verificable y no se han analizado. Si vas a descargarlos, pásalos antes por un antivirus o VirusTotal.`, file: null, line: null, snippet: bins.slice(0, 5).join(', ') });
-  extra.coverage.push({ label: 'Releases de GitHub', status: bins.length ? 'partial' : 'ok', detail: bins.length ? `${bins.length} binarios publicados sin analizar` : 'sin binarios publicados' });
-}
 
 // El destino del clon queda dentro de CLONE_DIR: si se pudiera elegir cualquier
 // ruta, un clon en ~/.vim/pack/x/start, ~/.config/autostart o similares se
@@ -372,6 +336,10 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       return send(res, 200, page.HTML, 'text/html; charset=utf-8');
+    }
+    // Analizador para el navegador: en la app local solo da las fichas a la demo.
+    if (req.method === 'GET' && url.pathname === '/analyzer.js') {
+      return send(res, 200, fs.readFileSync(path.join(page.PUBLIC, 'analyzer.js')), 'text/javascript; charset=utf-8');
     }
     // Fuentes autoalojadas: solo los .woff2 de public/fonts, sin rutas.
     const fm = req.method === 'GET' && url.pathname.match(/^\/fonts\/([a-z0-9-]+\.woff2)$/);

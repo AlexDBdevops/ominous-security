@@ -138,11 +138,11 @@ ominous.tudominio.com {
 
 Entra una vez en `https://ominous.tudominio.com/?token=<tu token>`. Caddy obtiene el certificado y la cookie se marca como `Secure`. Ten en cuenta que los clones se guardan en el disco del servidor, no en el tuyo.
 
-### Demo en Cloudflare Pages (Terraform)
+### Versión web en Cloudflare Pages (Terraform)
 
-La interfaz se publica en modo demo en Cloudflare Pages, con el mismo montaje que el CV: Terraform crea el proyecto de Pages (`infra/main.tf`, estado en HCP Terraform) y Wrangler sube la web. En cada push a `main`, el job `pages` genera `dist/` con `npm run build:site`, aplica Terraform y despliega. La web estática solo funciona en modo demo: analizar repos de verdad y clonarlos necesita el servidor local. La conexión con tu cuenta de claude.ai tampoco está disponible en Pages, solo en el artefacto de claude.ai.
+La misma página se publica en Cloudflare Pages en su edición **web**: analiza repos públicos de verdad desde el navegador de quien la visita, sin servidor y sin IA (ver [Versión web](#versión-web)). Usa el mismo montaje que el CV: Terraform crea el proyecto de Pages (`infra/main.tf`, estado en HCP Terraform) y Wrangler sube la web. En cada push a `main`, el job `pages` genera `dist/` con `npm run build:site`, aplica Terraform y despliega.
 
-`dist/_headers` lleva las mismas cabeceras de seguridad que el servidor, con la CSP calculada a partir del hash del script, más HSTS.
+`dist/_headers` lleva las mismas cabeceras de seguridad que el servidor, más HSTS. La CSP autoriza el script de la página por su hash, `analyzer.js` del propio dominio y conexiones solo a `api.github.com`, `raw.githubusercontent.com`, `api.osv.dev` y `api.securityscorecards.dev`.
 
 Configuración, una sola vez (puedes reutilizar el token y la organización del CV):
 
@@ -160,6 +160,36 @@ Configuración, una sola vez (puedes reutilizar el token y la organización del 
 Sin estas credenciales el job solo genera la demo y no despliega nada. La URL queda en `https://ominous-security.pages.dev` (o la que asigne Cloudflare si el nombre está ocupado; sale en el resumen del job). Para cambiar el nombre, edita `project_name` en `infra/main.tf`.
 
 Para probarla en local: `npm run build:site && npx serve dist`.
+
+## Versión web
+
+Una sola rama y una sola página con tres ediciones. Solo cambia una línea (`const EDITION`) y la CSP, que genera `lib/page.js`:
+
+| Edición | Dónde | Qué hace |
+|---|---|---|
+| `local` | servidor local (`npm start`, Docker) | todo: clon aislado, historial de git, submódulos, clonado con arreglos y revisión con Claude (tu cuenta Pro/Max o una clave) |
+| `web` | Cloudflare Pages | análisis real en el navegador, sin IA |
+| `web-ai` | artefacto de claude.ai | lo mismo que `web` más la revisión con Claude usando la cuenta de claude.ai de quien lo abre |
+
+En las ediciones web, `public/analyzer.js` (el mismo analizador de `lib/`, empaquetado con `npm run build:web`) corre en un Web Worker:
+
+1. Pide los metadatos del repo y el commit de la rama a la API de GitHub, y la lista de ficheros de ese commit.
+2. Descarga cada fichero desde `raw.githubusercontent.com` en ese commit exacto, a la memoria de la pestaña. Nada se escribe en disco ni se ejecuta.
+3. Pasa las mismas reglas que el servidor (los tests comprueban que los hallazgos son idénticos) y consulta OSV.dev y OpenSSF Scorecard.
+4. Si el análisis pasa de 5 minutos, la página corta el worker (protege de ficheros diseñados para colgar analizadores).
+
+Para clonar, la página da el comando que deja el clon en el commit analizado y, si se pide, descarga un parche con los arreglos automáticos para aplicarlo con `git apply`.
+
+Cada hallazgo lleva una ficha **¿Qué es esto?** sin IA: el tipo de fallo (con su CWE), por qué importa, qué comprobar y, en las dependencias, los avisos publicados en OSV.dev (identificadores CVE/GHSA, resumen, versión corregida y enlaces).
+
+Si GitHub no encuentra el repo, la página explica los motivos posibles: la cuenta no existe (mal escrita, borrada o suspendida) o el repo no es público (mal escrito, privado, borrado, retirado por GitHub o renombrado sin redirección). También avisa de rama inexistente, repo vacío, bloqueo legal o por GitHub, límite de consultas y falta de conexión.
+
+Límites de la versión web frente al servidor local:
+
+- Sin historial de git ni submódulos (se marcan como no revisados).
+- Sin iniciar sesión, la API de GitHub permite 60 consultas por hora por IP. Cada análisis usa unas 5. Los ficheros desde `raw.githubusercontent.com` no cuentan.
+- Hasta 3000 ficheros, 2 MB por fichero y 60 MB en total.
+- Si OSV.dev o Scorecard no responden al navegador, salen como "no revisado" en lugar de fallar.
 
 ## Qué analiza
 
@@ -246,6 +276,7 @@ En GitHub Actions:
 npm run lint        # sintaxis, 'use strict', JSON y caracteres invisibles o bidi
 npm test            # tests con node --test (Node 20+)
 npm run scan:self   # la herramienta se analiza a sí misma
+npm run build:web   # vuelve a generar public/analyzer.js tras cambiar lib/ o web/
 ```
 
 Los tests generan sus repos trampa en una carpeta temporal en cada ejecución (`test/helpers/fixtures.js`). Así el repo no contiene ficheros que VS Code, pytest o Claude Code pudieran ejecutar al abrirlo.
@@ -255,19 +286,20 @@ Los tests generan sus repos trampa en una carpeta temporal en cada ejecución (`
 | Job | Qué hace |
 |---|---|
 | `lint` | `npm run lint` |
+| `bundle` | `public/analyzer.js` al día con `lib/` y `web/` |
 | `test` | tests en Node 20, 22 y 24; en 22 con cobertura (resumen del job) y JUnit |
 | `self-scan` | la herramienta se analiza a sí misma; en repos públicos los hallazgos salen en *Security > Code scanning* |
 | `audit` | `npm audit` |
 | `docker` | imagen con prueba de humo y escaneo Trivy; desde `main` y etiquetas se publica en `ghcr.io/alexdbdevops/ominous-security` |
 | `package` | zip del código como artefacto |
-| `pages` | demo en Cloudflare Pages: Terraform y Wrangler (solo en `main`) |
+| `pages` | versión web en Cloudflare Pages: Terraform y Wrangler (solo en `main`) |
 | `release` | release de GitHub al subir una etiqueta `vX.Y.Z` que coincida con `package.json` |
 
 `codeql.yml` pasa CodeQL cada semana y en cada PR, y Dependabot vigila npm, las acciones y la imagen base.
 
 Para publicar una versión, sube la versión en `package.json`, haz commit y ejecuta `git tag v1.0.1 && git push --tags`.
 
-Al autoescanearse se excluyen `lib/rules.js`, `lib/decoder.js`, `lib/extra.js`, la demo y este README: contienen las firmas que busca, igual que la base de firmas de un antivirus.
+Al autoescanearse se excluyen `lib/rules.js`, `lib/decoder.js`, `lib/extra.js`, la página, `public/analyzer.js` (las mismas reglas empaquetadas) y este README: contienen las firmas que busca, igual que la base de firmas de un antivirus.
 
 ## Solución de problemas
 
@@ -280,6 +312,8 @@ Al autoescanearse se excluyen `lib/rules.js`, `lib/decoder.js`, `lib/extra.js`, 
 | `El destino tiene que estar dentro de…` | El campo de destino admite solo un nombre de carpeta, dentro de `CLONE_DIR` |
 | Reputación, Releases o Scorecard en gris | La API de GitHub ha alcanzado el límite (define `GITHUB_TOKEN`) o el proyecto no tiene Scorecard publicado |
 | `Dependencias (OSV.dev): no se pudo consultar` | Sin conexión con api.osv.dev o `OMINOUS_OFFLINE=1` |
+| Versión web: `Has llegado al límite de consultas a GitHub` | 60 consultas por hora por IP sin sesión. Espera a la hora indicada o usa el servidor local con `GITHUB_TOKEN` |
+| Versión web: `No se pudo conectar con GitHub` dentro de claude.ai | El visor de artefactos puede bloquear conexiones externas. Abre la web publicada o el servidor local |
 | `No se encuentra Claude Code` al conectar | Instálalo en el mismo equipo que la app (`npm install -g @anthropic-ai/claude-code`) o indica la ruta con `OMINOUS_CLAUDE_BIN`. Dentro de Docker no está disponible |
 | `Claude Code está instalado pero sin sesión` | Ejecuta `claude` en una terminal e inicia sesión con tu cuenta Pro o Max |
 | `la clave solo se puede escribir desde este mismo equipo o a través de HTTPS` | La app está expuesta sin HTTPS. Pon la clave en `ANTHROPIC_API_KEY` o publica la app detrás de un proxy con TLS |
@@ -304,15 +338,20 @@ lib/summary.js       resumen del diff de los arreglos (Claude o local)
 lib/ai.js            revisión con IA: selección de ficheros, prompt, esquema y validación
 lib/connection.js    conexión con Claude: clave de la API o Claude Code con tu cuenta
 lib/worker.js        hilo de análisis con tiempo máximo
-public/index.html    interfaz (sin servidor funciona en modo demo)
+lib/explain.js       fichas "¿Qué es esto?" de cada regla (CWE, por qué importa, qué comprobar)
+lib/github.js        URL de GitHub, metadatos, renombrados, releases y Scorecard (servidor y web)
+web/                 versión web: descarga desde GitHub (github.js), worker (entry.js) y shims de Node
+public/index.html    interfaz (ediciones local, web y web-ai)
+public/analyzer.js   analizador empaquetado para el navegador (generado, no editar)
 public/fonts/        fuentes autoalojadas (OFL)
 Dockerfile           imagen (usuario sin privilegios, tini, healthcheck)
 compose.yaml         despliegue local endurecido; compose.lan.yaml lo abre a tu red con token
 scripts/local.sh     construir y arrancar en local (local.ps1 en Windows)
-scripts/build-site.js demo estática para Cloudflare Pages (dist/ con _headers)
+scripts/build-site.js versión web para Cloudflare Pages (dist/ con _headers)
+scripts/build-web.js genera public/analyzer.js con esbuild
 infra/main.tf        proyecto de Cloudflare Pages en Terraform
 tools/deploy/        Wrangler fijado a una versión exacta
-lib/page.js          interfaz y CSP compartidas por el servidor y la demo
+lib/page.js          interfaz y CSP de cada edición
 test/                tests con node --test
 ```
 

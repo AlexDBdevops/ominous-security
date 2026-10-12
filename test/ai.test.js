@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { analyzeTree } = require('../lib/analyzer');
-const { buildPrompt, normalize, aiReview, available, SCHEMA } = require('../lib/ai');
+const { buildPrompt, normalize, aiReview, SCHEMA } = require('../lib/ai');
 const fx = require('./helpers/fixtures');
 
 process.env.OMINOUS_OFFLINE = '1';
@@ -45,6 +45,9 @@ test('el esquema de salida es estricto', () => {
   assert.equal(SCHEMA.properties.findings.items.additionalProperties, false);
 });
 
-test('sin SDK la revisión con IA da un error claro', { skip: available() }, async () => {
+let hasSdk = true;
+try { require.resolve('@anthropic-ai/sdk'); } catch { hasSdk = false; }
+
+test('sin SDK la revisión con IA da un error claro', { skip: hasSdk }, async () => {
   await assert.rejects(aiReview({ repo: {}, ctx: { docs: [], decoded: [], tree: [], findings: [] } }), /npm install/);
 });
