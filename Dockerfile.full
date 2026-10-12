@@ -1,0 +1,84 @@
+# Ominous Security, variante completa: la misma app más Gitleaks, Semgrep, Trivy y
+# CodeQL (JavaScript/TypeScript, Python y Ruby). Ocupa bastante más que la normal.
+# Se usa con scripts/local.sh full (o .\scripts\local.ps1 full), que añade compose.full.yaml.
+#
+# Cada herramienta va en una versión fija y se comprueba su sha256 antes de instalarla
+# (versiones publicadas al menos dos semanas antes de fijarlas). Semgrep se instala con
+# pip solo desde ruedas y con todos los hashes (docker/semgrep-requirements.txt).
+# Debian y no Alpine: CodeQL necesita glibc. Debian 13 trae git 2.47.3, ya corregido
+# para los fallos de clonado de 2025 (CVE-2025-48384).
+
+FROM node:22-trixie-slim AS tools
+ARG GITLEAKS_VERSION=8.30.1
+ARG GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+ARG TRIVY_VERSION=0.74.0
+ARG TRIVY_SHA256=2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+ARG CODEQL_VERSION=2.27.1
+ARG CODEQL_JS_SHA256=8d30281899f150633913b08cf4eae755be607f282d643ad418ad638f4210e833
+ARG CODEQL_PY_SHA256=ea86393c6c812542ae5a3a7122bcc760873707a50b25cc47d2fd7cfd514b0cb0
+ARG CODEQL_RUBY_SHA256=f740af650b9bbedc92b2489caabfa4a87506917da4ffadd9e30efd657a760cfa
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl zstd python3 python3-venv \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /dl
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+# get URL SHA256 FICHERO: descarga y para la construcción si el sha256 no coincide.
+RUN printf '#!/bin/bash\nset -euo pipefail\ncurl -fsSL --retry 3 -o "$3" "$1"\necho "$2  $3" | sha256sum -c --quiet -\n' > /usr/local/bin/get \
+ && chmod +x /usr/local/bin/get \
+ && mkdir -p /opt/bin
+RUN get "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" "$GITLEAKS_SHA256" gitleaks.tgz \
+ && tar -xzf gitleaks.tgz -C /opt/bin gitleaks \
+ && get "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" "$TRIVY_SHA256" trivy.tgz \
+ && tar -xzf trivy.tgz -C /opt/bin trivy \
+ && rm -f ./*.tgz
+# Un paquete de CodeQL por lenguaje: los tres traen el mismo CLI, así que se extraen
+# en la misma carpeta y queda un CodeQL con los tres lenguajes (sin Java, C++, Go…).
+RUN base="https://github.com/github/codeql-action/releases/download/codeql-bundle-v${CODEQL_VERSION}" \
+ && get "$base/codeql-bundle-javascript-linux64.tar.zst" "$CODEQL_JS_SHA256" js.tar.zst \
+ && get "$base/codeql-bundle-python-linux64.tar.zst" "$CODEQL_PY_SHA256" py.tar.zst \
+ && get "$base/codeql-bundle-ruby-linux64.tar.zst" "$CODEQL_RUBY_SHA256" ruby.tar.zst \
+ && for f in js py ruby; do tar -I zstd -xf "$f.tar.zst" -C /opt; rm "$f.tar.zst"; done \
+ && /opt/codeql/codeql resolve languages | grep -E '^(javascript|python|ruby) '
+COPY docker/semgrep-requirements.txt /dl/
+RUN python3 -m venv /opt/semgrep \
+ && /opt/semgrep/bin/pip install --no-cache-dir --only-binary :all: --require-hashes -r semgrep-requirements.txt \
+ && ln -s /opt/semgrep/bin/semgrep /opt/bin/semgrep \
+ && /opt/bin/semgrep --version
+# Los tar traen ficheros de otro usuario y algunos solo legibles por él (las consultas
+# precompiladas de CodeQL): todo queda de root, legible por todos y sin escritura para nadie
+# más. Si CodeQL no puede leer las precompiladas, las recompila en cada análisis (minutos y
+# memoria de sobra para quedarse sin ella).
+RUN chown -R root:root /opt && chmod -R a+rX,go-w /opt
+
+FROM node:22-trixie-slim
+LABEL org.opencontainers.image.title="Ominous Security (completa)" \
+      org.opencontainers.image.description="Analiza repositorios de GitHub antes de clonarlos, con Gitleaks, Semgrep, Trivy y CodeQL" \
+      org.opencontainers.image.source="https://github.com/AlexDBdevops/ominous-security" \
+      org.opencontainers.image.licenses="MIT"
+# python3: lo usan Semgrep y el extractor de Python de CodeQL.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates git tini python3 \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd -r ominous && useradd -r -g ominous -d /home/ominous ominous \
+ && mkdir -p /data && chown ominous:ominous /data
+COPY --from=tools /opt /opt
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+COPY server.js ./
+COPY lib ./lib
+COPY data ./data
+COPY bin ./bin
+COPY public ./public
+RUN ln -s /app/bin/ominous-scan.js /usr/local/bin/ominous-scan && chmod +x /app/bin/ominous-scan.js
+
+ENV HOST=0.0.0.0 PORT=8080 CLONE_DIR=/data NODE_ENV=production HOME=/tmp \
+    PATH=/opt/bin:/opt/codeql:$PATH \
+    SEMGREP_SEND_METRICS=off
+USER ominous
+EXPOSE 8080
+VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=3s CMD node -e "require('http').get({ host: '127.0.0.1', port: 8080, path: '/api/health', headers: { Host: '127.0.0.1:8080' } }, (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "server.js"]
