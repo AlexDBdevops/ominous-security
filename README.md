@@ -195,7 +195,7 @@ Límites de la versión web frente al servidor local:
 
 El repo se descarga en una carpeta temporal con git endurecido (sin hooks, sin submódulos, sin LFS y sin protocolos locales) y **nunca se ejecuta nada de él**. Al terminar se borra.
 
-**Vulnerabilidades del código.** Hay unas 100 reglas para JS/TS, Python, PHP, Go, Java, Ruby, Rust, C/C++, C#, Swift/Android, shell, Docker, Compose, Kubernetes, Terraform y GitHub Actions. También busca secretos de unos 20 proveedores y consulta en OSV.dev las dependencias con vulnerabilidades conocidas: npm (package.json, package-lock, yarn.lock), PyPI (requirements, poetry.lock, Pipfile.lock), Go, crates.io (Cargo.lock), RubyGems (Gemfile.lock), Packagist (composer.lock) y Maven (pom.xml, build.gradle). Cada hallazgo indica si **se puede arreglar** (con la solución) o **no** (con el motivo). Los arreglos *automáticos* se aplican si marcas la casilla al clonar. Lo que está en tests, ejemplos o documentación se rebaja a informativo.
+**Vulnerabilidades del código.** Hay unas 115 reglas para JS/TS, Python, PHP, Go, Java, Ruby, Rust, C/C++, C#, Swift/Android, shell, Docker, Compose, Kubernetes, Terraform y GitHub Actions. También busca secretos de unos 20 proveedores y consulta en OSV.dev las dependencias con vulnerabilidades conocidas: npm (package.json, package-lock, yarn.lock), PyPI (requirements, poetry.lock, Pipfile.lock), Go, crates.io (Cargo.lock), RubyGems (Gemfile.lock), Packagist (composer.lock) y Maven (pom.xml, build.gradle). Cada hallazgo indica si **se puede arreglar** (con la solución) o **no** (con el motivo). Los arreglos *automáticos* se aplican si marcas la casilla al clonar. Lo que está en tests, ejemplos o documentación se rebaja a informativo.
 
 **Amenazas deliberadas:**
 
