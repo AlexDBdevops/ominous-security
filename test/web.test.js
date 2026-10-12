@@ -46,6 +46,7 @@ function fakeGithub(root, { owner = 'acme', repo = 'tool', users = ['acme'], lim
     const base = `/repos/${owner}/${repo}`;
     if (p === base) return json(200, { full_name: `${owner}/${repo}`, default_branch: 'main', stargazers_count: 50, forks_count: 1, created_at: '2019-01-01T00:00:00Z', pushed_at: '2026-01-01T00:00:00Z', license: { spdx_id: 'MIT' }, owner: { type: 'User' }, size: 10 });
     if (p === `${base}/commits/main`) return new Response(SHA);
+    if (p.startsWith(`${base}/git/matching-refs/`)) return json(200, /^\/heads\/ma/.test(p.slice(`${base}/git/matching-refs`.length)) ? [{ ref: 'refs/heads/main' }] : []);
     if (p.startsWith(`${base}/commits/`)) return json(422, { message: 'No commit found' });
     if (p === `${base}/git/trees/${SHA}`) return json(200, { sha: SHA, truncated: false, tree: tree.map(({ link, ...e }) => e) });
     if (p === `${base}/releases`) return json(200, []);
@@ -227,4 +228,16 @@ test('web: en el worker, con el plazo agotado devuelve lo revisado en vez de un 
   assert.ok(!r.result.coverage.some((c) => c.label === 'Corte por tiempo'), 'en el worker no hace falta el aviso de la página');
   assert.ok(r.result.dependencies.skipped);
   assert.ok(r.result.coverage.some((c) => /OSV/.test(c.label) && c.status === 'skip' && /tiempo/.test(c.detail)));
+});
+
+test('web: un enlace a una carpeta del repo analiza la rama correcta', async (t) => {
+  const dir = fx.trapRepo2();
+  t.after(() => fx.rm(dir));
+  const calls = [];
+  const om = loadBundle(fakeGithub(dir, { calls }));
+  const r = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool/tree/main/src/utils' });
+  assert.ifError(r.error && new Error(r.error.message));
+  assert.equal(r.result.repo.branch, 'main');
+  assert.equal(r.result.repo.commit, SHA);
+  assert.equal(calls.filter((u) => /matching-refs/.test(u)).length, 2, 'ramas y etiquetas, dos consultas');
 });

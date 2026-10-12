@@ -18,7 +18,7 @@ const { externalPass } = require('./lib/external');
 const { Watch } = require('./lib/watch');
 const ai = require('./lib/ai');
 const conn = require('./lib/connection');
-const { parseGithubUrl, repoMetaFrom, parseScorecard, releasePass, movedPass, scorecardCoverage } = require('./lib/github');
+const { parseGithubUrl, resolveBranch, repoMetaFrom, parseScorecard, releasePass, movedPass, scorecardCoverage } = require('./lib/github');
 const HISTORY_COMMITS = Number(process.env.HISTORY_COMMITS) || 300;
 const MAX_SUBMODULES = 8;
 // Un solo límite para todo el análisis: clonar, historial, submódulos, herramientas
@@ -130,7 +130,7 @@ async function repoMeta(owner, repo) {
 }
 
 async function analyze(url) {
-  const ref = parseGithubUrl(url);
+  let ref = parseGithubUrl(url);
   if (!ref) throw Object.assign(new Error('URL no válida. Usa algo como https://github.com/usuario/repositorio'), { status: 400 });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ominous-'));
   const dir = path.join(tmp, 'repo');
@@ -142,6 +142,11 @@ async function analyze(url) {
       throw Object.assign(new Error(`El repositorio ocupa ${Math.round(meta0.size_kb / 1024)} MB y el límite es ${MAX_REPO_MB} MB (MAX_REPO_MB).`), { status: 413 });
     }
     const metaP = Promise.resolve(meta0);
+    // Enlace a una carpeta o a un fichero (/tree/rama/carpeta): la rama más larga que exista.
+    ref = await resolveBranch(ref, async () => {
+      const out = await git(['ls-remote', '--heads', '--tags', '--', ref.cloneUrl], { timeout: msLeft(prepUntil, 60000) });
+      return out.split('\n').map((l) => (l.split('\t')[1] || '').replace(/^refs\/(heads|tags)\//, '').replace(/\^\{\}$/, ''));
+    });
     const args = ['clone', '--depth', '1', '--no-tags', '--single-branch', '--no-recurse-submodules'];
     if (ref.branch) args.push('--branch', ref.branch);
     args.push('--', ref.cloneUrl, dir);
@@ -202,7 +207,7 @@ async function submodulePass(root, tmp, ref, extra, log, deadline) {
     if (/^\.\.?\//.test(url)) url = new URL(url, `https://github.com/${ref.owner}/${ref.repo}/`).href;
     const bad = /^(ext::|file:|\/|[a-z]:\\)/i.test(url) ? 'high' : /^http:\/\//i.test(url) ? 'medium' : null;
     if (bad) { extra.threats.push({ kind: 'threat', rule: 'submodule-url', severity: bad, title: `Submódulo con URL peligrosa: ${sm.path}`, description: `Apunta a ${url}. Las URL ext::, file:// o http:// permiten ejecutar comandos o suplantar el contenido.`, file: '.gitmodules', line: null }); continue; }
-    const sub = parseGithubUrl(url.replace(/^git@github\.com:/, 'https://github.com/'));
+    const sub = parseGithubUrl(url.replace(/^git@github\.com:/, 'https://github.com/'), { short: false });
     if (!sub) { extra.threats.push({ kind: 'threat', rule: 'submodule-external', severity: 'low', title: `Submódulo fuera de GitHub: ${sm.path}`, description: `Apunta a ${url}. No se ha analizado.`, file: '.gitmodules', line: null }); continue; }
     if (analyzed >= MAX_SUBMODULES || Date.now() > deadline) continue;
     let sha = null;
