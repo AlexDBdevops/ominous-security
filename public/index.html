@@ -176,11 +176,12 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
 .ai-src.local { color: var(--muted); }
 .ai-text { white-space: pre-wrap; font-size: 14px; margin: 0; overflow-wrap: anywhere; }
 .ai-note { font-size: 12.5px; color: var(--muted); margin: 0; }
-.aiblock { display: grid; gap: 12px; border-top: 3px solid var(--accent); }
-.aiblock h2 { font-size: 18px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.aiblock .lead { margin: 0; font-size: 14px; color: var(--muted); }
-.aiblock .sendline { font-size: 13px; margin: 0; }
-.aiblock .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.aibar { display: grid; gap: 10px; }
+.aibar-row { display: flex; gap: 8px 10px; flex-wrap: wrap; align-items: center; }
+.btn.sm { padding: 6px 12px; font-size: 13px; border-radius: 6px; }
+.btn.sm#aiBtn::before { content: "✦ "; }
+.aibar .sendline { font-size: 12.5px; color: var(--muted); margin: 0; flex: 1 1 220px; min-width: 0; }
+.aibar #aiOut { border-left: 2px solid var(--accent); padding-left: 12px !important; }
 .ai-verdict { display: grid; gap: 6px; border: 1px solid var(--line); border-left: 4px solid var(--ok); border-radius: 8px; padding: 10px 12px; background: var(--panel-2); }
 .ai-verdict.dudoso { border-left-color: var(--warn); }
 .ai-verdict.malicioso { border-left-color: var(--bad); }
@@ -309,6 +310,17 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     <div class="wrap" style="padding:0; gap:18px">
       <div class="panel verdict" id="verdict"></div>
 
+      <section class="aibar" id="aiPanel" hidden aria-label="Revisión con Claude">
+        <div class="aibar-row">
+          <button class="btn sm" id="aiBtn" type="button" title="Claude lee los ficheros de más riesgo y busca lo que las reglas no reconocen. Puede añadir avisos, pero nunca rebaja el veredicto.">Revisar con Claude</button>
+          <button class="btn sm ghost" id="aiConnBtn" type="button" hidden>Conectar Claude</button>
+          <button class="btn sm ghost" id="aiToggle" type="button" hidden aria-expanded="true" aria-controls="aiOut">Ocultar revisión</button>
+          <span id="aiLamp" class="lamp" hidden></span>
+          <span class="sendline" id="aiSend"></span>
+        </div>
+        <div id="aiOut" hidden></div>
+      </section>
+
       <section class="block" id="vulnSection" aria-labelledby="vulnH">
         <div class="block-head">
           <div>
@@ -335,13 +347,6 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         <div id="threatList" class="wrap" style="padding:0; gap:10px"></div>
       </section>
 
-      <section class="panel aiblock" id="aiPanel" hidden aria-labelledby="aiH">
-        <h2 id="aiH">Revisión con IA <span id="aiLamp" class="lamp" hidden></span></h2>
-        <p class="lead">Las reglas solo reconocen patrones conocidos. Claude lee los ficheros de más riesgo, como los que se ejecutan al instalar o abrir el proyecto y el código descifrado, y busca lógica maliciosa sin firma o código que no encaja con lo que el proyecto dice ser. Puede añadir avisos, pero nunca rebaja el veredicto.</p>
-        <p class="sendline" id="aiSend"></p>
-        <div class="row"><button class="btn" id="aiBtn" type="button">Revisar con Claude</button><button class="btn ghost" id="aiConnBtn" type="button" hidden>Conectar Claude</button></div>
-        <div id="aiOut" hidden></div>
-      </section>
 
       <section class="panel clone" id="clonePanel" hidden aria-labelledby="cloneH">
         <h2 id="cloneH">Clonar</h2>
@@ -798,6 +803,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     btn.textContent = 'Revisar con Claude';
     if (current.aiReview) { showAiResult(current.aiReview); return; }
     $('#aiOut').hidden = true;
+    $('#aiToggle').hidden = true;
     $('#aiConnBtn').hidden = true;
     if (LIVE && !CONN.connected) {
       $('#aiSend').textContent = 'Claude no está conectado. Conéctalo con tu cuenta (Claude Code) o con una clave de la API para activar esta revisión.';
@@ -820,6 +826,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     $('#aiLamp').textContent = AI_VERDICT[r.verdict];
     $('#aiSend').textContent = `${r.demo ? 'Respuesta simulada' : `Revisado por ${r.model}${VIA[r.via] ? ` (${VIA[r.via]})` : ''}`} · ${r.via === 'claude.ai' ? `${r.sent.findings} hallazgos de la demo revisados` : `${r.sent.files} fichero${r.sent.files === 1 ? '' : 's'}${r.sent.decoded ? ` y ${r.sent.decoded} payload${r.sent.decoded === 1 ? '' : 's'} descifrado${r.sent.decoded === 1 ? '' : 's'}` : ''}`}.`;
     $('#aiBtn').hidden = true;
+    setAiOpen(true);
     const out = $('#aiOut');
     out.className = 'wrap';
     out.style.padding = '0';
@@ -835,10 +842,20 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     out.hidden = false;
   }
 
+  function setAiOpen(open) {
+    const t = $('#aiToggle');
+    t.hidden = false;
+    t.setAttribute('aria-expanded', String(open));
+    t.textContent = open ? 'Ocultar revisión' : 'Ver revisión';
+    $('#aiOut').hidden = !open;
+  }
+  $('#aiToggle').addEventListener('click', () => setAiOpen($('#aiToggle').getAttribute('aria-expanded') !== 'true'));
+
   $('#aiBtn').addEventListener('click', async () => {
     const btn = $('#aiBtn');
     btn.disabled = true;
-    btn.textContent = 'Claude está revisando… (puede tardar un par de minutos)';
+    btn.textContent = 'Claude está revisando…';
+    $('#aiSend').textContent = 'Puede tardar un par de minutos.';
     try {
       let r;
       if (LIVE) {
