@@ -56,3 +56,9 @@ test('ediciones: la local no conecta fuera y la marca de edición existe', () =>
   for (const e of page.EDITIONS) assert.match(page.edition(e).body, new RegExp(`const EDITION = '${e}';`));
   assert.throws(() => page.edition('otra'));
 });
+
+test('la CSP sigue valiendo si index.html llega con CRLF (checkout en Windows)', () => {
+  const { lf, BODY } = require('../lib/page');
+  assert.equal(lf('a\r\nb\rc\n'), 'a\nb\nc\n');
+  assert.ok(!BODY.includes('\r'));
+});

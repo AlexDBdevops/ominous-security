@@ -1,0 +1,6 @@
+# Finales de línea LF en todas partes: la CSP autoriza el script de la página por su hash,
+# y un checkout con CRLF (core.autocrlf en Windows) lo cambiaría.
+* text=auto eol=lf
+*.png binary
+*.woff2 binary
+*.ico binary
