@@ -31,7 +31,7 @@ test('vigilancia: avisa una vez de las vulnerabilidades nuevas', async (t) => {
 
   const { Watch, manifests } = require('../lib/watch');
   assert.deepEqual(manifests(path.join(root, 'app')), ['requirements.txt'], 'sin node_modules');
-  const w = new Watch(root);
+  const w = new Watch(root, { inline: true });
   const id = w.add({ owner: 'acme', repo: 'app', commit: 'c'.repeat(40), dest: path.join(root, 'app'), findings: [{ rule: 'dep-vuln', advisories: ['GHSA-old0-0000-0000'] }] });
   w.add({ owner: 'acme', repo: 'gone', commit: 'd'.repeat(40), dest: path.join(root, 'gone') });
   w.add({ owner: 'acme', repo: 'link', commit: 'e'.repeat(40), dest: path.join(root, 'link') });
@@ -57,4 +57,47 @@ test('vigilancia: avisa una vez de las vulnerabilidades nuevas', async (t) => {
   assert.equal(r.newAlerts, 0, 'cada aviso se da una vez');
   assert.deepEqual(w.forget(id), { removed: 1 });
   assert.equal(w.list().repos.length, 2);
+});
+
+// Sin enlaces simbólicos: en Windows crearlos pide permisos de administrador.
+test('vigilancia: comprueba en un hilo aparte sin bloquear el servidor', async (t) => {
+  const root = fx.tmpDir('watch-worker');
+  fx.write(root, { 'app/requirements.txt': 'jinja2==2.10', 'docs/README.md': 'hola' });
+  t.after(() => fx.rm(root));
+  const prev = process.env.OMINOUS_OFFLINE;
+  process.env.OMINOUS_OFFLINE = '1';
+  t.after(() => { if (prev === undefined) delete process.env.OMINOUS_OFFLINE; else process.env.OMINOUS_OFFLINE = prev; });
+  const { Watch } = require('../lib/watch');
+  const w = new Watch(root);
+  w.add({ owner: 'acme', repo: 'app', commit: 'c'.repeat(40), dest: path.join(root, 'app') });
+  w.add({ owner: 'acme', repo: 'docs', commit: 'd'.repeat(40), dest: path.join(root, 'docs') });
+  let ticks = 0;
+  const beat = setInterval(() => { ticks++; }, 1);
+  const r = await w.check();
+  clearInterval(beat);
+  assert.ok(ticks > 0, 'el hilo principal sigue libre mientras se comprueba');
+  const app = r.repos.find((x) => x.repo === 'acme/app');
+  assert.equal(app.status, 'skip');
+  assert.match(app.detail, /OSV/, 'sin conexión lo dice, igual que sin worker');
+  const docs = r.repos.find((x) => x.repo === 'acme/docs');
+  assert.equal(docs.status, 'ok');
+  assert.ok(docs.checkedAt);
+  assert.ok(r.checkedAt);
+});
+
+test('vigilancia: si se pasa de tiempo se corta y los repos quedan como saltados', async (t) => {
+  const root = fx.tmpDir('watch-timeout');
+  fx.write(root, { 'app/requirements.txt': 'jinja2==2.10' });
+  t.after(() => fx.rm(root));
+  const { Watch } = require('../lib/watch');
+  const w = new Watch(root, { timeoutMs: 1 });
+  w.add({ owner: 'acme', repo: 'app', commit: 'c'.repeat(40), dest: path.join(root, 'app'), findings: [{ rule: 'dep-vuln', advisories: ['GHSA-old0-0000-0000'] }] });
+  const logs = [];
+  const r = await w.check((m) => logs.push(m));
+  const app = r.repos.find((x) => x.repo === 'acme/app');
+  assert.equal(app.status, 'skip');
+  assert.match(app.detail, /se cortó/);
+  assert.equal(app.known, 1, 'lo que ya se sabía se conserva');
+  assert.ok(logs.some((m) => /superó/.test(m)));
+  assert.ok(r.checkedAt);
 });
