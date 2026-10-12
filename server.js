@@ -14,6 +14,7 @@ const { applyAutoFixes } = require('./lib/analyzer');
 const { summarizeDiff } = require('./lib/summary');
 const { scanHistory } = require('./lib/history');
 const { parseGitmodules } = require('./lib/extra');
+const ai = require('./lib/ai');
 const HISTORY_COMMITS = Number(process.env.HISTORY_COMMITS) || 300;
 const MAX_SUBMODULES = 8;
 const ANALYSIS_TIMEOUT = Number(process.env.ANALYSIS_TIMEOUT_MS) || 5 * 60 * 1000;
@@ -150,10 +151,14 @@ async function analyze(url) {
     await historyPass(dir, extra, log);
     await submodulePass(fs.realpathSync(dir), tmp, ref, extra, log);
     releasePass(meta, extra);
-    const result = await runAnalysis(fs.realpathSync(dir), meta, log, extra);
+    const { aiContext, ...result } = await runAnalysis(fs.realpathSync(dir), meta, log, extra);
     const id = crypto.randomUUID();
-    const payload = { id, repo: { owner: ref.owner, name: ref.repo, branch, commit, url: `https://github.com/${ref.owner}/${ref.repo}`, meta }, ...result, analyzedAt: new Date().toISOString() };
-    analyses.set(id, { ref, commit, payload, at: Date.now() });
+    const payload = {
+      id, repo: { owner: ref.owner, name: ref.repo, branch, commit, url: `https://github.com/${ref.owner}/${ref.repo}`, meta }, ...result,
+      ai: { available: ai.available(), files: aiContext.docs.length, decoded: aiContext.decoded.length, chars: aiContext.chars },
+      analyzedAt: new Date().toISOString(),
+    };
+    analyses.set(id, { ref, commit, payload, aiContext, at: Date.now() });
     for (const [k, v] of analyses) if (Date.now() - v.at > 6 * 3600e3 || analyses.size > MAX_ANALYSES) analyses.delete(k);
     return payload;
   } finally {
@@ -242,8 +247,11 @@ function assertInsideCloneDir(dir) {
 async function clone({ id, dest, acknowledged, applyFixes }) {
   const a = analyses.get(id);
   if (!a) throw Object.assign(new Error('Análisis no encontrado o caducado. Vuelve a analizar el repositorio.'), { status: 404 });
-  if (a.payload.summary.overall !== 'green' && acknowledged !== true) {
-    throw Object.assign(new Error('El análisis no está en verde: marca la casilla de confirmación para clonar.'), { status: 409 });
+  const aiRaised = !!(a.aiReview && a.aiReview.raises);
+  if ((a.payload.summary.overall !== 'green' || aiRaised) && acknowledged !== true) {
+    throw Object.assign(new Error(aiRaised && a.payload.summary.overall === 'green'
+      ? 'La revisión con IA ha encontrado problemas graves: marca la casilla de confirmación para clonar.'
+      : 'El análisis no está en verde: marca la casilla de confirmación para clonar.'), { status: 409 });
   }
   const target = resolveDest(dest, a.ref.repo);
   if (fs.existsSync(target)) throw Object.assign(new Error(`La carpeta ya existe: ${target}`), { status: 409 });
@@ -269,6 +277,16 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
   }
   a.clonedTo = target;
   return { path: target, commit: a.commit, pinnedToAnalyzedCommit: pinned, fixesApplied: fixes, diff: diff.slice(0, 400000), diffTruncated: diff.length > 400000, summary };
+}
+
+// Segunda opinión de Claude sobre los ficheros de más riesgo. Solo añade avisos.
+async function reviewWithAi({ id }) {
+  const a = analyses.get(id);
+  if (!a) throw Object.assign(new Error('Análisis no encontrado o caducado. Vuelve a analizar el repositorio.'), { status: 404 });
+  if (a.aiReview) return a.aiReview;
+  const r = await ai.aiReview({ repo: a.payload.repo, ctx: a.aiContext });
+  a.aiReview = r;
+  return r;
 }
 
 // Deshace los arreglos automáticos: deja el clon tal cual está en GitHub (commit analizado).
@@ -347,7 +365,7 @@ const server = http.createServer(async (req, res) => {
   }
   // La comprobación de salud no exige token (la usan Docker y los scripts), pero sin él no da detalles.
   if (req.method === 'GET' && url.pathname === '/api/health') {
-    return send(res, 200, { ok: true, mode: 'live', ...(tokenOk(req) ? { cloneDir: EXPOSED ? path.basename(CLONE_DIR) : CLONE_DIR } : {}) });
+    return send(res, 200, { ok: true, mode: 'live', ...(tokenOk(req) ? { cloneDir: EXPOSED ? path.basename(CLONE_DIR) : CLONE_DIR, ai: ai.available() } : {}) });
   }
   if (!tokenOk(req)) {
     if (req.method === 'GET' && url.pathname === '/') return send(res, 401, '<!doctype html><meta charset="utf-8"><title>Ominous Security</title><p>Acceso protegido. Abre la URL con <code>?token=TU_TOKEN</code>.</p>', 'text/html; charset=utf-8');
@@ -373,6 +391,13 @@ const server = http.createServer(async (req, res) => {
       const r = await clone(body);
       console.log(`✓ Clonado en ${r.path}`);
       return send(res, 200, r);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/ai-review') {
+      if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
+      const body = await readJson(req);
+      if (rateLimited(req.socket.remoteAddress)) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
+      console.log('→ Revisión con IA');
+      return send(res, 200, await reviewWithAi(body));
     }
     if (req.method === 'POST' && url.pathname === '/api/revert') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });

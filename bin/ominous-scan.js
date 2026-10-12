@@ -89,6 +89,7 @@ async function main(argv = process.argv.slice(2)) {
   if (!fs.statSync(root).isDirectory()) throw new Error(`${root} no es una carpeta`);
 
   const result = await analyzeTree(root, {}, () => {}, { exclude: opts.exclude });
+  delete result.aiContext; // solo lo usa el servidor para la revisión con IA
   const { summary } = result;
 
   for (const f of [...result.threats, ...result.vulnerabilities]) {

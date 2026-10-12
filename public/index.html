@@ -169,6 +169,18 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
 .ai-src.local { color: var(--muted); }
 .ai-text { white-space: pre-wrap; font-size: 14px; margin: 0; overflow-wrap: anywhere; }
 .ai-note { font-size: 12.5px; color: var(--muted); margin: 0; }
+.aiblock { display: grid; gap: 12px; border-top: 3px solid var(--accent); }
+.aiblock h2 { font-size: 18px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.aiblock .lead { margin: 0; font-size: 14px; color: var(--muted); }
+.aiblock .sendline { font-size: 13px; margin: 0; }
+.aiblock .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ai-verdict { display: grid; gap: 6px; border: 1px solid var(--line); border-left: 4px solid var(--ok); border-radius: 8px; padding: 10px 12px; background: var(--panel-2); }
+.ai-verdict.dudoso { border-left-color: var(--warn); }
+.ai-verdict.malicioso { border-left-color: var(--bad); }
+.ai-verdict p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fp { display: grid; gap: 6px; font-size: 13.5px; }
+.fp ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.tag.ia { color: var(--accent); }
 .diff { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; line-height: 1.55; overflow: auto; max-height: 420px; padding: 6px 0; }
 .diff span { display: block; padding: 0 10px; white-space: pre; min-width: max-content; }
 .diff .add { background: var(--ok-bg); color: var(--ok); }
@@ -238,6 +250,14 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
         <div id="threatList" class="wrap" style="padding:0; gap:10px"></div>
       </section>
 
+      <section class="panel aiblock" id="aiPanel" hidden aria-labelledby="aiH">
+        <h2 id="aiH">Revisión con IA <span id="aiLamp" class="lamp" hidden></span></h2>
+        <p class="lead">Las reglas encuentran patrones conocidos. Claude lee los ficheros de más riesgo (los que se ejecutan al instalar o abrir el proyecto, los que tienen avisos y el código descifrado) y busca lo que no tiene firma: lógica maliciosa nueva, si el código hace lo que el proyecto dice ser y posibles falsos positivos. Solo puede añadir avisos: nunca rebaja el veredicto.</p>
+        <p class="sendline" id="aiSend"></p>
+        <div class="row"><button class="btn" id="aiBtn" type="button">Revisar con Claude</button></div>
+        <div id="aiOut" hidden></div>
+      </section>
+
       <section class="panel clone" id="clonePanel" hidden aria-labelledby="cloneH">
         <h2 id="cloneH">Clonar</h2>
         <div class="clone-inner">
@@ -266,6 +286,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
   let LIVE = false;
   let current = null;
   let vulnFilter = 'all';
+  let AI_SERVER = false;
 
   function el(tag, attrs = {}, ...kids) {
     const n = document.createElement(tag);
@@ -290,6 +311,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
       const j = await r.json();
       if (j && j.mode === 'live') {
         LIVE = true;
+        AI_SERVER = !!j.ai;
         $('#mode').textContent = 'Servidor local';
         $('#mode').className = 'mode live';
         $('#modeNote').textContent = `Los repos se descargan en una carpeta temporal y nunca se ejecuta nada de ellos. Los clones van a ${j.cloneDir}.`;
@@ -329,6 +351,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
     $('#scanErr').hidden = true;
     $('#results').hidden = true;
     $('#clonePanel').hidden = true;
+    $('#aiPanel').hidden = true;
     $('#scanBtn').disabled = true;
     showProgress();
     try {
@@ -394,6 +417,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
       ? (dep.osvAvailable ? `Dependencias: ${dep.total} encontradas, ${dep.checked} con versión exacta consultadas en OSV.dev, ${dep.vulnerable} con vulnerabilidades conocidas.` : `Dependencias: ${dep.total} encontradas. No se pudo consultar OSV.dev (${dep.osvError || 'sin conexión'}).`)
       : 'No se encontraron ficheros de dependencias (package.json, requirements.txt, go.mod).';
 
+    renderAi();
     renderClone();
     $('#results').hidden = false;
     v.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
@@ -420,7 +444,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
 
   function findingCard(f) {
     const card = el('article', { class: 'finding', 'data-sev': f.severity },
-      el('div', { class: 'f-top' }, el('span', { class: `sev ${f.severity}` }, SEV[f.severity] || f.severity), el('span', { class: 'f-title' }, f.title)),
+      el('div', { class: 'f-top' }, el('span', { class: `sev ${f.severity}` }, SEV[f.severity] || f.severity), el('span', { class: 'f-title' }, f.title, f.ai ? el('span', { class: 'tag ia' }, 'IA') : null)),
       loc(f),
       f.description ? el('p', { class: 'f-desc' }, f.description) : null,
       f.detail ? el('p', { class: 'f-desc' }, f.detail) : null,
@@ -493,6 +517,79 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
     $('#threatList').replaceChildren(...parts);
   }
 
+  // ---------- Revisión con IA ----------
+  const AI_VERDICT = { sin_problemas_nuevos: 'Sin problemas nuevos', dudoso: 'Dudoso', malicioso: 'Malicioso' };
+  const AI_LAMP = { sin_problemas_nuevos: 'green', dudoso: 'yellow', malicioso: 'red' };
+
+  function renderAi() {
+    const info = current.ai || {};
+    $('#aiPanel').hidden = false;
+    $('#aiLamp').hidden = true;
+    const btn = $('#aiBtn');
+    btn.hidden = false;
+    btn.disabled = false;
+    btn.textContent = 'Revisar con Claude';
+    if (current.aiReview) { showAiResult(current.aiReview); return; }
+    $('#aiOut').hidden = true;
+    if (LIVE && !info.available) {
+      $('#aiSend').textContent = 'Para activarla instala el SDK (npm install) y define ANTHROPIC_API_KEY. Con Docker, añade la clave al fichero .env.';
+      btn.disabled = true;
+      return;
+    }
+    $('#aiSend').textContent = LIVE
+      ? `Se enviarán ${info.files} fichero${info.files === 1 ? '' : 's'}${info.decoded ? ` y ${info.decoded} payload${info.decoded === 1 ? '' : 's'} descifrado${info.decoded === 1 ? '' : 's'}` : ''} (${fmtBytes(info.chars || 0)}) a la API de Anthropic. Nada se ejecuta.`
+      : `Demo: la respuesta está simulada. En la app real se enviarían ${info.files || 0} ficheros a la API de Anthropic.`;
+  }
+
+  function showAiResult(r) {
+    $('#aiLamp').hidden = false;
+    $('#aiLamp').className = `lamp ${AI_LAMP[r.verdict]}`;
+    $('#aiLamp').textContent = AI_VERDICT[r.verdict];
+    $('#aiSend').textContent = `${r.demo ? 'Respuesta simulada' : `Revisado por ${r.model}`} · ${r.sent.files} fichero${r.sent.files === 1 ? '' : 's'}${r.sent.decoded ? ` y ${r.sent.decoded} payload${r.sent.decoded === 1 ? '' : 's'} descifrado${r.sent.decoded === 1 ? '' : 's'}` : ''}.`;
+    $('#aiBtn').hidden = true;
+    const out = $('#aiOut');
+    out.className = 'wrap';
+    out.style.padding = '0';
+    out.replaceChildren(...[
+      el('div', { class: `ai-verdict ${r.verdict}` }, el('p', {}, r.summary)),
+      r.findings.length ? el('h3', { class: 'group-title' }, 'Hallazgos nuevos', el('span', { class: 'count' }, `(${r.findings.length})`)) : null,
+      ...r.findings.map(findingCard),
+      r.falsePositives.length ? el('div', { class: 'fp' }, el('h3', { class: 'group-title' }, 'Posibles falsos positivos de las reglas'),
+        el('ul', {}, r.falsePositives.map((x) => el('li', {}, el('code', {}, x.rule), x.file ? ` en ${x.file}` : '', `: ${x.reason}`))),
+        el('p', { class: 'ai-note' }, 'Solo es una opinión: el veredicto no cambia. Revísalos tú antes de descartarlos.')) : null,
+      r.limits ? el('p', { class: 'ai-note' }, `Límites: ${r.limits}`) : null,
+    ].filter(Boolean));
+    out.hidden = false;
+  }
+
+  $('#aiBtn').addEventListener('click', async () => {
+    const btn = $('#aiBtn');
+    btn.disabled = true;
+    btn.textContent = 'Claude está revisando… (puede tardar un par de minutos)';
+    try {
+      let r;
+      if (LIVE) {
+        const res = await fetch('/api/ai-review', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: current.id }) });
+        r = await res.json();
+        if (!res.ok) throw new Error(r.error || 'Error en la revisión con IA');
+      } else {
+        await new Promise((x) => setTimeout(x, 1600));
+        r = JSON.parse(JSON.stringify(DEMO_AI[String(current.id).replace('demo-', '')]));
+        r.raises = r.verdict === 'malicioso' || r.findings.some((f) => ['high', 'critical'].includes(f.severity));
+      }
+      current.aiReview = r;
+      showAiResult(r);
+      renderClone();
+    } catch (e) {
+      const out = $('#aiOut');
+      out.className = 'err';
+      out.textContent = e.message;
+      out.hidden = false;
+      btn.disabled = false;
+      btn.textContent = 'Reintentar';
+    }
+  });
+
   // ---------- Clonado ----------
   function renderClone() {
     const s = current.summary;
@@ -502,11 +599,13 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
     $('#fixChk').checked = false;
     $('#fixChkWrap').hidden = !s.autoFixable;
     $('#fixChkText').textContent = `Aplicar ${s.autoFixable} arreglo${s.autoFixable > 1 ? 's' : ''} automático${s.autoFixable > 1 ? 's' : ''} al clonar`;
-    const risky = s.overall !== 'green';
+    const aiRaised = !!(current.aiReview && current.aiReview.raises);
+    const risky = s.overall !== 'green' || aiRaised;
     $('#riskWrap').hidden = !risky;
-    $('#riskLine').className = `warnline ${s.overall === 'red' ? 'red' : ''}`;
+    $('#riskLine').className = `warnline ${s.overall === 'red' || aiRaised ? 'red' : ''}`;
     $('#riskLine').textContent = s.overall === 'red'
-      ? `Estado rojo: ${current.threats.filter((t) => ['critical', 'high'].includes(t.severity)).length} amenazas graves. No abras ni ejecutes este código.`
+      ? `Estado rojo: ${current.threats.filter((t) => ['critical', 'high'].includes(t.severity)).length} amenazas graves${aiRaised ? ', y la revisión con IA también ve problemas graves' : ''}. No abras ni ejecutes este código.`
+      : aiRaised ? 'La revisión con IA ha encontrado problemas graves que las reglas no detectan. Revísalos antes de clonar.'
       : 'Estado amarillo: hay vulnerabilidades o avisos que revisar.';
     $('#ackText').textContent = s.overall === 'red' ? 'Entiendo que este repositorio puede ser malicioso y quiero clonarlo igualmente (no se ejecutará nada).' : 'He revisado los avisos y quiero clonar igualmente.';
     $('#cloneBtn').className = `btn clone-btn ${s.overall === 'red' ? 'risky' : ''}`;
@@ -514,7 +613,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
     syncCloneBtn();
   }
   function syncCloneBtn() {
-    const risky = current && current.summary.overall !== 'green';
+    const risky = current && (current.summary.overall !== 'green' || !!(current.aiReview && current.aiReview.raises));
     $('#cloneBtn').disabled = !current || (risky && !$('#ackChk').checked);
   }
   $('#ackChk').addEventListener('change', syncCloneBtn);
@@ -618,6 +717,36 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
   }
 
   // ---------- Datos de la demo (simulados) ----------
+  const DEMO_AI = {
+    clean: {
+      demo: true, verdict: 'sin_problemas_nuevos', sent: { files: 9, decoded: 0, chars: 31000 },
+      summary: 'Es una herramienta de línea de comandos que lee ficheros Markdown y escribe un índice. No abre conexiones de red, no lee nada fuera de la carpeta que le pasas y el script "prepare" solo compila TypeScript con tsc. No veo nada que las reglas hayan pasado por alto.',
+      findings: [],
+      falsePositives: [{ rule: 'npm-lifecycle', file: 'package.json', reason: 'El script "prepare" ejecuta "tsc -p ." y nada más: es el paso de compilación normal de un paquete TypeScript.' }],
+      limits: 'No he revisado los tests ni la documentación porque no se envían.',
+    },
+    vuln: {
+      demo: true, verdict: 'dudoso', sent: { files: 14, decoded: 0, chars: 58000 },
+      summary: 'No veo nada malicioso: es una API de inventario en Flask con errores de seguridad típicos de un proyecto descuidado. Además de lo que han encontrado las reglas, hay un fallo de autorización que ninguna firma detecta.',
+      findings: [
+        { kind: 'vuln', ai: true, rule: 'ai-review', severity: 'high', title: 'Cualquier usuario puede borrar productos de otros', description: 'En routes/items.py:57, DELETE /items/<id> comprueba que hay sesión iniciada pero no que el producto pertenezca al usuario: basta con cambiar el id en la URL (IDOR).', file: 'routes/items.py', line: 57, fixable: false, notFixableReason: 'Añadir la comprobación item.owner_id == current_user.id antes de borrar. Depende del modelo de datos del proyecto.' },
+        { kind: 'vuln', ai: true, rule: 'ai-review', severity: 'medium', title: 'El token de sesión no caduca', description: 'auth.py:22 firma el token sin fecha de expiración, así que uno robado sirve para siempre.', file: 'auth.py', line: 22, fixable: false, notFixableReason: 'Añadir exp al payload del token y rotar la clave de firma.' },
+      ],
+      falsePositives: [],
+      limits: 'No he podido revisar las plantillas HTML ni las migraciones de base de datos.',
+    },
+    evil: {
+      demo: true, verdict: 'malicioso', sent: { files: 22, decoded: 3, chars: 96000 },
+      summary: 'Es un ladrón de carteras disfrazado de bot de trading. El código de "trading" es un señuelo: lo que se ejecuta al instalar descarga un segundo payload, busca carteras de Solana y extensiones de navegador y las envía a un webhook de Discord. Hay además una técnica que las reglas no detectan: el bot cambia de comportamiento si detecta una máquina virtual, para esquivar a los analistas.',
+      findings: [
+        { kind: 'threat', ai: true, rule: 'ai-review', severity: 'critical', title: 'Se esconde de los entornos de análisis', description: 'src/env.js:12 comprueba el número de CPUs, la memoria y nombres de usuario típicos de sandboxes (sandbox, malware, vagrant). Si los encuentra, el bot funciona de forma inofensiva; si no, activa el robo.', file: 'src/env.js', line: 12, detail: 'Qué hacer: no lo ejecutes en ninguna máquina. Si ya lo has instalado, mueve los fondos a una cartera nueva desde otro equipo.' },
+        { kind: 'threat', ai: true, rule: 'ai-review', severity: 'high', title: 'La clave privada viaja en la petición de "precio"', description: 'src/rpc.js:41 añade la clave privada de la cartera, codificada en base64, como cabecera de una petición que aparenta consultar precios.', file: 'src/rpc.js', line: 41, detail: 'Qué hacer: tratarla como comprometida.' },
+      ],
+      falsePositives: [],
+      limits: 'El segundo payload se descarga en tiempo de ejecución de un servidor externo y no está en el repo, así que no he podido verlo.',
+    },
+  };
+
   const DEMO_URLS = {
     clean: 'https://github.com/demo-lab/markdown-toc-cli',
     vuln: 'https://github.com/demo-lab/flask-inventory',
@@ -635,6 +764,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
     const base = JSON.parse(JSON.stringify(DEMO[kind]));
     if (m && !Object.values(DEMO_URLS).includes(url)) { base.repo.owner = m[1]; base.repo.name = m[2].replace(/\.git$/, ''); base.repo.meta.description = `(${base.repo.meta.description}) Resultado simulado de la demo.`; }
     base.id = 'demo-' + kind;
+    base.ai = { available: true, ...DEMO_AI[kind].sent };
     return base;
   }
 
