@@ -40,6 +40,17 @@ const CLONE_DIR = process.env.CLONE_DIR || path.join(os.homedir(), 'ominous-clon
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const NO_HOOKS = path.join(os.tmpdir(), 'ominous-no-hooks-dir');
 const analyses = new Map(); // id -> { repo, commit, result, at }
+const MAX_ANALYSES = 50;
+const MAX_REPO_MB = Number(process.env.MAX_REPO_MB) || 1024;
+const MAX_CONCURRENT = Number(process.env.MAX_CONCURRENT) || 2;
+const RATE_LIMIT = Number(process.env.RATE_LIMIT) || 30; // análisis por IP cada 10 minutos
+const ALLOW_ANY_DEST = process.env.ALLOW_ANY_DEST === '1';
+const TOKEN = process.env.OMINOUS_TOKEN || '';
+const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const allowedHosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`,
+  ...String(process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)]);
+// Expuesta = acepta peticiones dirigidas a un nombre que no es de esta máquina.
+const EXPOSED = !!process.env.ALLOW_ANY_HOST || [...allowedHosts].some((h) => !LOOPBACK.test(h));
 
 // Git endurecido: sin hooks, sin submódulos, sin LFS, sin prompts, sin protocolo file://
 const GIT_SAFE = ['-c', `core.hooksPath=${NO_HOOKS}`, '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never', '-c', 'submodule.recurse=false', '-c', 'core.fsmonitor=false'];
@@ -85,15 +96,27 @@ async function gh(pathname) {
   } catch { return null; }
 }
 
+// OpenSSF Scorecard: puntuación pública (0-10) de las prácticas de seguridad del repo
+// (revisión de código, ramas protegidas, dependencias fijadas, CI peligroso…).
+async function scorecard(owner, repo) {
+  try {
+    const r = await fetch(`https://api.securityscorecards.dev/projects/github.com/${owner}/${repo}`, { headers: { 'user-agent': 'ominous-security' }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const weak = (j.checks || []).filter((c) => c.score >= 0 && c.score <= 3).map((c) => c.name);
+    return { score: j.score, date: j.date, weak: weak.slice(0, 8) };
+  } catch { return null; }
+}
+
 async function repoMeta(owner, repo) {
   const r = await gh(`/repos/${owner}/${repo}`);
   if (!r) return null;
-  const u = await gh(`/users/${owner}`);
+  const [u, sc] = await Promise.all([gh(`/users/${owner}`), scorecard(owner, repo)]);
   return {
     full_name: r.full_name, description: r.description, stargazers_count: r.stargazers_count, forks_count: r.forks_count,
     created_at: r.created_at, pushed_at: r.pushed_at, archived: r.archived, fork: r.fork, parent: r.parent && r.parent.full_name,
     license: r.license && r.license.spdx_id !== 'NOASSERTION' ? r.license.spdx_id : null, default_branch: r.default_branch,
-    owner_type: r.owner && r.owner.type, owner_created_at: u && u.created_at, size_kb: r.size,
+    owner_type: r.owner && r.owner.type, owner_created_at: u && u.created_at, size_kb: r.size, scorecard: sc,
     releases: ((await gh(`/repos/${owner}/${repo}/releases?per_page=5`)) || []).map((rel) => ({ tag: rel.tag_name, assets: (rel.assets || []).map((a) => a.name) })),
   };
 }
@@ -104,7 +127,11 @@ async function analyze(url) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ominous-'));
   const dir = path.join(tmp, 'repo');
   try {
-    const metaP = repoMeta(ref.owner, ref.repo);
+    const meta0 = await repoMeta(ref.owner, ref.repo);
+    if (meta0 && meta0.size_kb > MAX_REPO_MB * 1024) {
+      throw Object.assign(new Error(`El repositorio ocupa ${Math.round(meta0.size_kb / 1024)} MB y el límite es ${MAX_REPO_MB} MB (MAX_REPO_MB).`), { status: 413 });
+    }
+    const metaP = Promise.resolve(meta0);
     const args = ['clone', '--depth', '1', '--no-tags', '--single-branch', '--no-recurse-submodules'];
     if (ref.branch) args.push('--branch', ref.branch);
     args.push('--', ref.cloneUrl, dir);
@@ -116,6 +143,10 @@ async function analyze(url) {
     const meta = await metaP;
     const log = (m) => console.log(`  [${ref.owner}/${ref.repo}] ${m}`);
     const extra = { vulns: [], threats: [], coverage: [] };
+    if (meta && meta.full_name && meta.full_name.toLowerCase() !== `${ref.owner}/${ref.repo}`.toLowerCase()) {
+      extra.threats.push({ kind: 'threat', rule: 'repo-moved', severity: 'low', title: 'El repositorio ha cambiado de nombre o de dueño', description: `Pediste ${ref.owner}/${ref.repo} y GitHub redirige a ${meta.full_name}. Comprueba que es el proyecto que buscas: si el nombre antiguo queda libre, otra persona puede registrarlo y servir código distinto en la misma URL (repojacking).`, file: null, line: null });
+    }
+    extra.coverage.push({ label: 'OpenSSF Scorecard', status: meta && meta.scorecard ? 'ok' : 'skip', detail: meta && meta.scorecard ? `${meta.scorecard.score}/10 (${String(meta.scorecard.date).slice(0, 10)})` : 'el proyecto no tiene puntuación publicada o no se pudo consultar' });
     await historyPass(dir, extra, log);
     await submodulePass(fs.realpathSync(dir), tmp, ref, extra, log);
     releasePass(meta, extra);
@@ -123,7 +154,7 @@ async function analyze(url) {
     const id = crypto.randomUUID();
     const payload = { id, repo: { owner: ref.owner, name: ref.repo, branch, commit, url: `https://github.com/${ref.owner}/${ref.repo}`, meta }, ...result, analyzedAt: new Date().toISOString() };
     analyses.set(id, { ref, commit, payload, at: Date.now() });
-    for (const [k, v] of analyses) if (Date.now() - v.at > 6 * 3600e3) analyses.delete(k);
+    for (const [k, v] of analyses) if (Date.now() - v.at > 6 * 3600e3 || analyses.size > MAX_ANALYSES) analyses.delete(k);
     return payload;
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -185,15 +216,39 @@ function releasePass(meta, extra) {
   extra.coverage.push({ label: 'Releases de GitHub', status: bins.length ? 'partial' : 'ok', detail: bins.length ? `${bins.length} binarios publicados sin analizar` : 'sin binarios publicados' });
 }
 
+// El destino del clon queda dentro de CLONE_DIR: si se pudiera elegir cualquier
+// ruta, un clon en ~/.vim/pack/x/start, ~/.config/autostart o similares se
+// ejecutaría solo. ALLOW_ANY_DEST=1 lo permite, pero nunca con la app expuesta.
+function resolveDest(dest, repoName) {
+  const raw = dest && String(dest).trim() ? String(dest).trim() : repoName;
+  if (raw.includes('\0')) throw Object.assign(new Error('Destino no válido'), { status: 400 });
+  const expanded = raw.replace(/^~(?=$|[\\/])/, os.homedir());
+  const target = path.resolve(CLONE_DIR, expanded);
+  if (ALLOW_ANY_DEST && !EXPOSED) return target;
+  const rel = path.relative(path.resolve(CLONE_DIR), target);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw Object.assign(new Error(`El destino tiene que estar dentro de ${CLONE_DIR}. Escribe solo el nombre de la carpeta.`), { status: 400 });
+  }
+  return target;
+}
+
+function assertInsideCloneDir(dir) {
+  if (ALLOW_ANY_DEST && !EXPOSED) return;
+  const base = fs.realpathSync(CLONE_DIR);
+  const real = fs.realpathSync(dir);
+  if (real !== base && !real.startsWith(base + path.sep)) throw Object.assign(new Error('El destino sale de la carpeta de clones (enlace simbólico).'), { status: 400 });
+}
+
 async function clone({ id, dest, acknowledged, applyFixes }) {
   const a = analyses.get(id);
   if (!a) throw Object.assign(new Error('Análisis no encontrado o caducado. Vuelve a analizar el repositorio.'), { status: 404 });
   if (a.payload.summary.overall !== 'green' && acknowledged !== true) {
     throw Object.assign(new Error('El análisis no está en verde: marca la casilla de confirmación para clonar.'), { status: 409 });
   }
-  const target = path.resolve(dest && String(dest).trim() ? String(dest).trim().replace(/^~(?=$|[\\/])/, os.homedir()) : path.join(CLONE_DIR, a.ref.repo));
+  const target = resolveDest(dest, a.ref.repo);
   if (fs.existsSync(target)) throw Object.assign(new Error(`La carpeta ya existe: ${target}`), { status: 409 });
   fs.mkdirSync(path.dirname(target), { recursive: true });
+  assertInsideCloneDir(path.dirname(target));
   const args = ['clone', '--no-recurse-submodules'];
   if (a.ref.branch) args.push('--branch', a.ref.branch);
   args.push('--', a.ref.cloneUrl, target);
@@ -227,8 +282,19 @@ async function revert({ id }) {
 // ---------- HTTP ----------
 const INDEX = path.join(__dirname, 'public', 'index.html');
 
-function send(res, status, body, type = 'application/json; charset=utf-8') {
-  res.writeHead(status, { 'content-type': type, 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-store' });
+const CSP = [
+  "default-src 'none'", "script-src 'unsafe-inline'", "style-src 'unsafe-inline' https://fonts.googleapis.com",
+  'font-src https://fonts.gstatic.com', "img-src 'self' data:", "connect-src 'self'",
+  "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
+].join('; ');
+const SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-store',
+  'x-frame-options': 'DENY', 'cross-origin-opener-policy': 'same-origin', 'cross-origin-resource-policy': 'same-origin',
+  'permissions-policy': 'camera=(), microphone=(), geolocation=(), usb=(), payment=()',
+};
+
+function send(res, status, body, type = 'application/json; charset=utf-8', extraHeaders = {}) {
+  res.writeHead(status, { 'content-type': type, ...SECURITY_HEADERS, ...(/^text\/html/.test(type) ? { 'content-security-policy': CSP } : {}), ...extraHeaders });
   res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
 }
 
@@ -240,7 +306,32 @@ function readJson(req) {
   });
 }
 
-const allowedHosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`]);
+// Token de acceso: obligatorio si la app está expuesta. Se entrega una vez por
+// URL (/?token=...) y se guarda en una cookie HttpOnly + SameSite=Strict.
+function tokenOk(req) {
+  if (!TOKEN) return true;
+  const given = (req.headers.authorization || '').replace(/^Bearer\s+/i, '')
+    || (String(req.headers.cookie || '').match(/(?:^|;\s*)ominous_token=([^;]+)/) || [])[1] || '';
+  return sameSecret(given, TOKEN);
+}
+
+function sameSecret(x, y) {
+  const a = crypto.createHash('sha256').update(String(x)).digest();
+  const b = crypto.createHash('sha256').update(String(y)).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+// Límite de análisis por IP y de análisis simultáneos (cada uno clona y ocupa CPU y disco).
+const hits = new Map();
+let running = 0;
+function rateLimited(ip) {
+  const now = Date.now();
+  const list = (hits.get(ip) || []).filter((t) => now - t < 10 * 60e3);
+  list.push(now);
+  hits.set(ip, list);
+  if (hits.size > 10000) hits.clear();
+  return list.length > RATE_LIMIT;
+}
 
 const server = http.createServer(async (req, res) => {
   // Bloquea DNS rebinding y peticiones de otras webs (este servidor escribe en tu disco).
@@ -249,17 +340,32 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && origin && origin.replace(/^https?:\/\//, '') !== req.headers.host) return send(res, 403, { error: 'Origen no permitido' });
 
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (TOKEN && req.method === 'GET' && url.pathname === '/' && url.searchParams.has('token')) {
+    if (!sameSecret(url.searchParams.get('token'), TOKEN)) return send(res, 401, { error: 'Token incorrecto' });
+    const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+    return send(res, 303, '', 'text/plain', { location: '/', 'set-cookie': `ominous_token=${encodeURIComponent(TOKEN)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${secure}` });
+  }
+  // La comprobación de salud no exige token (la usan Docker y los scripts), pero sin él no da detalles.
+  if (req.method === 'GET' && url.pathname === '/api/health') {
+    return send(res, 200, { ok: true, mode: 'live', ...(tokenOk(req) ? { cloneDir: EXPOSED ? path.basename(CLONE_DIR) : CLONE_DIR } : {}) });
+  }
+  if (!tokenOk(req)) {
+    if (req.method === 'GET' && url.pathname === '/') return send(res, 401, '<!doctype html><meta charset="utf-8"><title>Ominous Security</title><p>Acceso protegido. Abre la URL con <code>?token=TU_TOKEN</code>.</p>', 'text/html; charset=utf-8');
+    return send(res, 401, { error: 'Falta el token de acceso' });
+  }
   try {
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       const page = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body>${fs.readFileSync(INDEX, 'utf8')}</body></html>`;
       return send(res, 200, page, 'text/html; charset=utf-8');
     }
-    if (req.method === 'GET' && url.pathname === '/api/health') return send(res, 200, { ok: true, mode: 'live', cloneDir: CLONE_DIR });
     if (req.method === 'POST' && url.pathname === '/api/analyze') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
       const body = await readJson(req);
-      console.log(`→ Analizando ${body.url}`);
-      return send(res, 200, await analyze(body.url));
+      if (rateLimited(req.socket.remoteAddress)) return send(res, 429, { error: 'Demasiados análisis seguidos. Espera unos minutos.' });
+      if (running >= MAX_CONCURRENT) return send(res, 503, { error: 'Ya hay análisis en curso. Inténtalo en un momento.' });
+      console.log(`→ Analizando ${String(body.url).slice(0, 200)}`);
+      running++;
+      try { return send(res, 200, await analyze(body.url)); } finally { running--; }
     }
     if (req.method === 'POST' && url.pathname === '/api/clone') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
@@ -275,15 +381,24 @@ const server = http.createServer(async (req, res) => {
     send(res, 404, { error: 'No encontrado' });
   } catch (e) {
     console.error(`✗ ${e.message}`);
-    send(res, e.status || 500, { error: e.message });
+    if (!res.headersSent) send(res, e.status || 500, { error: e.status ? e.message : 'Error interno' });
   }
 });
+// El análisis puede durar hasta ANALYSIS_TIMEOUT; las cabeceras, poco.
+server.requestTimeout = ANALYSIS_TIMEOUT + 60000;
+server.headersTimeout = 15000;
 
 if (require.main === module) {
+  if (EXPOSED && TOKEN.length < 24) {
+    console.error('\n  La app acepta peticiones desde otros equipos (ALLOWED_HOSTS/ALLOW_ANY_HOST) y no tiene token.');
+    console.error('  Define OMINOUS_TOKEN con al menos 24 caracteres, por ejemplo: OMINOUS_TOKEN=$(openssl rand -hex 24)\n');
+    process.exit(1);
+  }
+  fs.mkdirSync(CLONE_DIR, { recursive: true });
   server.listen(PORT, HOST, () => {
     console.log(`\n  Ominous Security escuchando en http://localhost:${PORT}`);
     console.log(`  Los clones se guardan en ${CLONE_DIR}\n`);
   });
 }
 
-module.exports = { parseGithubUrl, server };
+module.exports = { parseGithubUrl, resolveDest, server };

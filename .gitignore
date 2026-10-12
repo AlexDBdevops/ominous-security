@@ -8,3 +8,5 @@ test-output.txt
 ominous-report.json
 *.zip
 .env
+clones/
+.ominous-token

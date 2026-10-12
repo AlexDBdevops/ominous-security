@@ -46,6 +46,28 @@ test('repo trampa 2: autoejecutables, agentes de IA, Unicode y señuelos', async
   for (const id of ['c-gets', 'c-format', 'gha-unpinned']) assert.ok(v.has(id), `falta ${id}`);
 });
 
+test('repo trampa 3: contenedores, CI, esteganografía y suplantación de comandos', async (t) => {
+  const dir = fx.trapRepo3();
+  t.after(() => fx.rm(dir));
+  const r = await analyzeTree(dir, {});
+  const th = rules(r.threats);
+  for (const id of ['image-payload', 'stego-loader', 'stego-lib', 'npm-bin-hijack', 'gha-secrets-dump']) assert.ok(th.has(id), `falta ${id}`);
+  const v = rules(r.vulnerabilities);
+  for (const id of ['compose-host-ns', 'compose-host-mount', 'compose-cap-add', 'docker-root']) assert.ok(v.has(id), `falta ${id}`);
+  assert.ok(!r.threats.some((x) => x.file === 'assets/ok.png'), 'una imagen normal no es sospechosa');
+  assert.equal(r.threats.find((x) => x.rule === 'npm-bin-hijack').description.includes('"git"'), true);
+});
+
+test('Scorecard de OpenSSF aparece en la confianza', async (t) => {
+  const dir = fx.cleanRepo();
+  t.after(() => fx.rm(dir));
+  const r = await analyzeTree(dir, { stargazers_count: 100, created_at: '2020-01-01', scorecard: { score: 3.1, date: '2026-10-01', weak: ['Code-Review', 'Pinned-Dependencies'] } });
+  const sc = r.trust.find((x) => x.label === 'OpenSSF Scorecard');
+  assert.ok(sc);
+  assert.equal(sc.ok, false);
+  assert.match(sc.value, /3\.1\/10/);
+});
+
 test('el código de tests se rebaja a informativo', async (t) => {
   const dir = fx.write(fx.tmpDir('nonprod'), { 'tests/test_x.py': 'import pickle\nobj = pickle.loads(data)\n' });
   t.after(() => fx.rm(dir));

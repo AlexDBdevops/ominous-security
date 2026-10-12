@@ -5,7 +5,19 @@ const http = require('http');
 
 const PORT = 18000 + Math.floor(Math.random() * 2000);
 process.env.PORT = String(PORT);
-const { parseGithubUrl, server } = require('../server');
+const os = require('os');
+const path = require('path');
+const { spawn } = require('child_process');
+process.env.CLONE_DIR = path.join(os.tmpdir(), `ominous-test-clones-${process.pid}`);
+const { parseGithubUrl, resolveDest, server } = require('../server');
+
+test('el destino del clon no puede salir de CLONE_DIR', () => {
+  assert.equal(resolveDest('', 'repo'), path.join(process.env.CLONE_DIR, 'repo'));
+  assert.equal(resolveDest('mio/proyecto', 'repo'), path.join(process.env.CLONE_DIR, 'mio/proyecto'));
+  for (const d of ['../fuera', '/etc/x', '~/.vim/pack/x/start/r', '~/.config/autostart/r', '.', 'a/../../b']) {
+    assert.throws(() => resolveDest(d, 'repo'), /dentro de/, d);
+  }
+});
 
 test('parseGithubUrl acepta formatos válidos', () => {
   for (const u of ['https://github.com/expressjs/express', 'github.com/expressjs/express', 'git@github.com:expressjs/express.git', 'https://github.com/expressjs/express/tree/master']) {
@@ -26,7 +38,7 @@ function req(method, path, headers = {}, body) {
     const r = http.request({ host: '127.0.0.1', port: PORT, method, path, headers }, (res) => {
       let data = '';
       res.on('data', (c) => { data += c; });
-      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+      res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers }));
     });
     r.on('error', reject);
     if (body) r.write(body);
@@ -43,10 +55,13 @@ test('servidor HTTP', async (t) => {
     const r = await req('GET', '/api/health', host);
     assert.equal(r.status, 200);
   });
-  await t.test('sirve la interfaz', async () => {
+  await t.test('sirve la interfaz con cabeceras de seguridad', async () => {
     const r = await req('GET', '/', host);
     assert.equal(r.status, 200);
     assert.match(r.body, /<!doctype html>/i);
+    assert.match(r.headers['content-security-policy'], /frame-ancestors 'none'/);
+    assert.equal(r.headers['x-frame-options'], 'DENY');
+    assert.equal(r.headers['x-content-type-options'], 'nosniff');
   });
   await t.test('bloquea DNS rebinding (Host ajeno)', async () => {
     const r = await req('GET', '/api/health', { host: `evil.example:${PORT}` });
@@ -64,4 +79,44 @@ test('servidor HTTP', async (t) => {
     const r = await req('POST', '/api/clone', { ...host, 'content-type': 'application/json' }, JSON.stringify({ id: 'nope' }));
     assert.ok(r.status >= 400);
   });
+});
+
+function startServer(env) {
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  child.stdout.on('data', (c) => { out += c; });
+  child.stderr.on('data', (c) => { out += c; });
+  const ready = new Promise((resolve) => {
+    child.on('exit', (code) => resolve({ exited: true, code, out }));
+    child.stdout.on('data', () => { if (/escuchando/.test(out)) resolve({ exited: false }); });
+  });
+  return { child, ready };
+}
+
+test('expuesta sin token no arranca', async () => {
+  const { ready } = startServer({ PORT: String(PORT + 1), ALLOWED_HOSTS: `ominous.example:${PORT + 1}`, OMINOUS_TOKEN: '' });
+  const r = await ready;
+  assert.equal(r.exited, true);
+  assert.equal(r.code, 1);
+  assert.match(r.out, /OMINOUS_TOKEN/);
+});
+
+test('expuesta con token exige el token', async (t) => {
+  const port = PORT + 2;
+  const tokenValue = 'x'.repeat(32);
+  const { child, ready } = startServer({ PORT: String(port), ALLOWED_HOSTS: `ominous.example:${port}`, OMINOUS_TOKEN: tokenValue });
+  t.after(() => child.kill());
+  assert.equal((await ready).exited, false);
+  const get = (headers) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: '/api/health', headers: { host: `ominous.example:${port}`, ...headers } }, (res) => { res.resume(); resolve(res.statusCode); }).on('error', reject);
+  });
+  assert.equal(await get({}), 200, 'la salud no exige token');
+  const page = await new Promise((resolve) => http.get({ host: '127.0.0.1', port, path: '/', headers: { host: `ominous.example:${port}` } }, (res) => { res.resume(); resolve(res.statusCode); }));
+  assert.equal(page, 401);
+  const api = await new Promise((resolve) => { const r = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/analyze', headers: { host: `ominous.example:${port}`, 'content-type': 'application/json' } }, (res) => { res.resume(); resolve(res.statusCode); }); r.end('{}'); });
+  assert.equal(api, 401);
+  const getRoot = (headers) => new Promise((resolve) => http.get({ host: '127.0.0.1', port, path: '/', headers: { host: `ominous.example:${port}`, ...headers } }, (res) => { res.resume(); resolve(res.statusCode); }));
+  assert.equal(await getRoot({ authorization: 'Bearer incorrecto' }), 401);
+  assert.equal(await getRoot({ authorization: `Bearer ${tokenValue}` }), 200);
+  assert.equal(await getRoot({ cookie: `ominous_token=${tokenValue}` }), 200);
 });

@@ -7,3 +7,5 @@ coverage
 junit.xml
 *.zip
 .github
+.ominous-token
+clones

@@ -242,7 +242,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
         <h2 id="cloneH">Clonar</h2>
         <div class="clone-inner">
           <div class="row">
-            <input id="dest" type="text" placeholder="Carpeta destino (por defecto ~/ominous-clones/repo)" aria-label="Carpeta destino">
+            <input id="dest" type="text" placeholder="Nombre de la carpeta en ~/ominous-clones (por defecto, el del repo)" aria-label="Carpeta destino">
           </div>
           <label class="chk" id="fixChkWrap" hidden><input type="checkbox" id="fixChk"><span id="fixChkText"></span></label>
           <div id="riskWrap" hidden>
@@ -293,7 +293,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
         $('#mode').textContent = 'Servidor local';
         $('#mode').className = 'mode live';
         $('#modeNote').textContent = `Los repos se descargan en una carpeta temporal y nunca se ejecuta nada de ellos. Los clones van a ${j.cloneDir}.`;
-        $('#dest').placeholder = `Carpeta destino (por defecto ${j.cloneDir}/<repo>)`;
+        $('#dest').placeholder = `Nombre de la carpeta en ${j.cloneDir} (por defecto, el del repo)`;
         return;
       }
     } catch (e) { /* sin servidor: demo */ }
@@ -611,7 +611,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
       return `diff --git a/${v.file} b/${v.file}\n--- a/${v.file}\n+++ b/${v.file}\n@@ -${v.line},1 +${v.line},1 @@\n-${v.snippet}\n+${after}`;
     }).join('\n');
     return {
-      path: body.dest || `~/ominous-clones/${current.repo.name}`, commit: current.repo.commit, pinnedToAnalyzedCommit: false, demo: true,
+      path: `~/ominous-clones/${body.dest || current.repo.name}`, commit: current.repo.commit, pinnedToAnalyzedCommit: false, demo: true,
       fixesApplied: fixes.map((v) => ({ file: v.file, line: v.line, rule: v.rule })), diff,
       summary: { source: 'ia', text: DEMO_SUMMARY[kind] || '' },
     };

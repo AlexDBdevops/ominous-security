@@ -1,0 +1,13 @@
+# Abre Ominous Security a tu red local (por ejemplo, para usarla desde el móvil).
+# Úsalo con scripts/local.sh lan, que genera el token y detecta tu IP. A mano:
+#   OMINOUS_LAN_IP=192.168.1.20 OMINOUS_TOKEN=$(openssl rand -hex 24) \
+#     docker compose -f compose.yaml -f compose.lan.yaml up -d
+# Sin OMINOUS_TOKEN la app se niega a arrancar en este modo.
+
+services:
+  app:
+    ports: !override
+      - "${OMINOUS_PORT:-8080}:8080"
+    environment:
+      ALLOWED_HOSTS: "localhost:${OMINOUS_PORT:-8080},127.0.0.1:${OMINOUS_PORT:-8080},${OMINOUS_LAN_IP:?Define OMINOUS_LAN_IP}:${OMINOUS_PORT:-8080}"
+      OMINOUS_TOKEN: ${OMINOUS_TOKEN:?Define OMINOUS_TOKEN}

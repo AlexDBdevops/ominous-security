@@ -98,12 +98,43 @@ function trapRepo2() {
   return root;
 }
 
+// PNG mínimo de 1x1 píxel, válido.
+function tinyPng() {
+  const zlib = require('zlib');
+  const crc = (buf) => { let c = ~0; for (const b of buf) { c ^= b; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return ~c >>> 0; };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const c = Buffer.alloc(4); c.writeUInt32BE(crc(td));
+    return Buffer.concat([len, td, c]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(1, 0); ihdr.writeUInt32BE(1, 4); ihdr[8] = 8; ihdr[9] = 0;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.from([0, 0]))), chunk('IEND', Buffer.alloc(0))]);
+}
+
+// Tercer repo trampa: contenedores, CI, esteganografía y suplantación de comandos.
+function trapRepo3() {
+  return write(tmpDir('trap3'), {
+    'compose.yaml': 'services:\n  app:\n    image: x:1.0\n    network_mode: host\n    cap_add: [SYS_ADMIN]\n    volumes:\n      - /:/host\n',
+    Dockerfile: 'FROM node:22-alpine\nCOPY . /app\nCMD ["node", "/app/index.js"]\n',
+    '.github/workflows/ci.yml': 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "${{ toJSON(secrets) }}" > s.txt\n',
+    'loader.py': 'from PIL import Image\nexec(open("assets/cat.png", "rb").read()[-400:])\n',
+    'reveal.py': 'from stegano import lsb\nprint(lsb.reveal("x.png"))\n',
+    'assets/cat.png': Buffer.concat([tinyPng(), Buffer.from('MZ'), Buffer.alloc(200, 0x41)]),
+    'assets/ok.png': tinyPng(),
+    'package.json': JSON.stringify({ name: 'helper-tool', version: '1.0.0', bin: { git: 'cli.js', 'helper-tool': 'cli.js' } }, null, 2),
+    'cli.js': "'use strict';\nconsole.log('hola');\n",
+  });
+}
+
 // Repo limpio: debe salir en verde.
 function cleanRepo() {
   return write(tmpDir('clean'), {
     'package.json': JSON.stringify({ name: 'clean', version: '1.0.0', scripts: { test: 'node --test' } }, null, 2),
     'index.js': "'use strict';\nconst path = require('path');\nmodule.exports = (a, b) => path.join(a, b);\n",
     'README.md': '# Clean\n\nUna librería de ejemplo.\n',
+    'logo.png': tinyPng(),
+    Dockerfile: 'FROM node:22-alpine\nWORKDIR /app\nCOPY . .\nUSER node\nCMD ["node", "index.js"]\n',
   });
 }
 
@@ -125,4 +156,4 @@ function rm(dir) {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-module.exports = { trapRepo, trapRepo2, cleanRepo, historyRepo, write, tmpDir, rm };
+module.exports = { trapRepo, trapRepo2, trapRepo3, cleanRepo, tinyPng, historyRepo, write, tmpDir, rm };
