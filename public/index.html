@@ -602,10 +602,13 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
 
   // ---------- Análisis en el navegador (ediciones web) ----------
   // El analizador corre en un Web Worker: si un fichero preparado para colgar las
-  // expresiones regulares lo bloquea, la página lo corta a los 5 minutos.
+  // expresiones regulares lo bloquea, la página lo corta a los 5 minutos. Antes de eso
+  // el propio analizador para solo (plazo con margen para la consulta que esté en curso)
+  // y devuelve lo que ha podido revisar en vez de un error.
   const WEB_TIMEOUT = 5 * 60 * 1000;
+  const WEB_MARGIN = 75 * 1000;
   const asError = (x) => Object.assign(new Error(x.message), x);
-  // Sin worker no se puede cortar desde fuera: el analizador recibe un plazo y para solo.
+  // Sin worker no se puede cortar desde fuera: el plazo es todo el tiempo.
   function pageEngine() {
     if (!window.Ominous) throw new Error('No se pudo cargar el analizador (analyzer.js). Recarga la página.');
     let ctl = null;
@@ -614,7 +617,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         if (msg.type === 'analyze') {
           if (ctl) ctl.abort();
           ctl = new AbortController();
-          msg = { ...msg, budgetMs: WEB_TIMEOUT, signal: ctl.signal };
+          msg = { ...msg, deadline: Date.now() + WEB_TIMEOUT, inPage: true, signal: ctl.signal };
         }
         return new Promise((resolve, reject) => window.Ominous.handle(msg, (m) => {
           if (m.log) { if (onLog) onLog(m.log); } else if (m.error) reject(asError(m.error)); else resolve(m.result);
@@ -631,8 +634,9 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         const timer = setTimeout(() => {
           w.terminate();
           if (engine === self) engine = null;
-          reject(new Error('El análisis superó 5 minutos y se ha cortado. Puede ser un repo muy grande o un fichero diseñado para bloquear analizadores: trátalo como sospechoso.'));
+          reject(new Error('El análisis se quedó bloqueado y se ha cortado a los 5 minutos. Suele ser un fichero diseñado para bloquear analizadores: trátalo como sospechoso.'));
         }, WEB_TIMEOUT);
+        if (msg.type === 'analyze') msg = { ...msg, deadline: Date.now() + WEB_TIMEOUT - WEB_MARGIN };
         w.onmessage = (ev) => {
           started = true;
           const m = ev.data || {};
@@ -698,7 +702,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     renderThreats();
 
     const dep = d.dependencies || {};
-    $('#depsLine').textContent = dep.total
+    $('#depsLine').textContent = dep.skipped ? 'Dependencias: sin revisar, se acabó el tiempo del análisis.' : dep.total
       ? (dep.osvAvailable ? `Dependencias: ${dep.total} encontradas, ${dep.checked} con versión exacta consultadas en OSV.dev, ${dep.vulnerable} con vulnerabilidades conocidas.` : `Dependencias: ${dep.total} encontradas. No se pudo consultar OSV.dev (${dep.osvError || 'sin conexión'}).`)
       : 'No se encontraron ficheros de dependencias (package.json, requirements.txt, go.mod).';
 
