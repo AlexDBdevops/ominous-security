@@ -203,3 +203,16 @@ test('web: el token de GitHub solo va a api.github.com y se valida', async (t) =
   await call(om, { type: 'analyze', url: 'https://github.com/acme/tool' });
   assert.ok(seen.every(([, auth]) => auth === null), 'sin token en el análisis siguiente');
 });
+
+test('web: en la página (sin worker) el análisis lleva plazo y lo dice en la cobertura', async (t) => {
+  const dir = fx.trapRepo2();
+  t.after(() => fx.rm(dir));
+  const om = loadBundle(fakeGithub(dir));
+  const r = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', budgetMs: 5 * 60 * 1000, signal: new AbortController().signal });
+  assert.ifError(r.error && new Error(r.error.message));
+  assert.ok(r.result.coverage.some((c) => c.label === 'Corte por tiempo' && /5 minutos/.test(c.detail)));
+  const ctl = new AbortController();
+  ctl.abort();
+  const gone = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', budgetMs: 5 * 60 * 1000, signal: ctl.signal });
+  assert.match(gone.error.message, /cancelado/, 'al lanzar otro análisis el anterior se cancela');
+});

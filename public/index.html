@@ -605,13 +605,22 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   // expresiones regulares lo bloquea, la página lo corta a los 5 minutos.
   const WEB_TIMEOUT = 5 * 60 * 1000;
   const asError = (x) => Object.assign(new Error(x.message), x);
+  // Sin worker no se puede cortar desde fuera: el analizador recibe un plazo y para solo.
   function pageEngine() {
     if (!window.Ominous) throw new Error('No se pudo cargar el analizador (analyzer.js). Recarga la página.');
+    let ctl = null;
     return {
-      send: (msg, onLog) => new Promise((resolve, reject) => window.Ominous.handle(msg, (m) => {
-        if (m.log) { if (onLog) onLog(m.log); } else if (m.error) reject(asError(m.error)); else resolve(m.result);
-      })),
-      kill: () => {},
+      send: (msg, onLog) => {
+        if (msg.type === 'analyze') {
+          if (ctl) ctl.abort();
+          ctl = new AbortController();
+          msg = { ...msg, budgetMs: WEB_TIMEOUT, signal: ctl.signal };
+        }
+        return new Promise((resolve, reject) => window.Ominous.handle(msg, (m) => {
+          if (m.log) { if (onLog) onLog(m.log); } else if (m.error) reject(asError(m.error)); else resolve(m.result);
+        }));
+      },
+      kill: () => { if (ctl) ctl.abort(); },
     };
   }
   function workerEngine() {
@@ -635,7 +644,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
           clearTimeout(timer);
           if (ev && ev.preventDefault) ev.preventDefault();
           if (started) { reject(new Error('El analizador ha fallado.')); return; }
-          // El visor no deja arrancar el worker: el mismo análisis en la página, sin corte por tiempo.
+          // El visor no deja arrancar el worker: el mismo análisis en la página, con plazo.
           try { engine = pageEngine(); engine.send(msg, onLog).then(resolve, reject); } catch (e) { reject(e); }
         };
         w.postMessage(msg);

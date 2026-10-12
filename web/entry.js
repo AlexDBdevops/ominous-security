@@ -15,7 +15,11 @@ const { fetchRepo, GhError } = require('./github');
 
 let last = null; // { root, files tocados por arreglos }
 
-async function analyze(url, log = () => {}, token = null) {
+// En la página (sin Web Worker) nadie puede cortar el análisis desde fuera: se le da un
+// plazo para que pare solo entre fichero y fichero, y se lee menos de cada fichero.
+const IN_PAGE_MAX_TEXT = 1.5 * 1024 * 1024;
+
+async function analyze(url, log = () => {}, token = null, { budgetMs = 0, signal = null } = {}) {
   const ref = parseGithubUrl(url);
   if (!ref) throw new GhError('URL no válida. Usa algo como https://github.com/usuario/repositorio', { status: 400 });
   const got = await fetchRepo(ref, { log, token });
@@ -25,6 +29,12 @@ async function analyze(url, log = () => {}, token = null) {
   releasePass(got.meta, extra);
   extra.coverage.push(...got.extra.coverage);
   extra.threats.push(...got.extra.threats);
+  if (budgetMs) {
+    extra.deadline = Date.now() + budgetMs;
+    extra.maxTextBytes = IN_PAGE_MAX_TEXT;
+    extra.signal = signal;
+    extra.coverage.push({ label: 'Corte por tiempo', status: 'partial', detail: `Este navegador no deja usar un Web Worker y el análisis corre en la propia página: se para a los ${Math.round(budgetMs / 60000)} minutos entre fichero y fichero y lee como mucho 1,5 MB de cada fichero de código, pero un solo fichero preparado para colgar el análisis no se puede cortar a medias.` });
+  }
   log('Analizando el código…');
   const { aiContext, ...result } = await analyzeTree(got.root, got.meta, log, extra);
   last = { root: got.root };
@@ -98,7 +108,7 @@ function errInfo(e) {
 // Mismo protocolo en el worker y en la página: { type, url | findings } → { log } | { result } | { error }.
 async function handle(msg, post) {
   try {
-    if (msg.type === 'analyze') post({ result: await analyze(msg.url, (m) => post({ log: m }), msg.token || null) });
+    if (msg.type === 'analyze') post({ result: await analyze(msg.url, (m) => post({ log: m }), msg.token || null, { budgetMs: msg.budgetMs || 0, signal: msg.signal || null }) });
     else if (msg.type === 'patch') post({ result: patch(msg.findings || []) });
     else post({ error: { message: 'Mensaje desconocido' } });
   } catch (e) {
