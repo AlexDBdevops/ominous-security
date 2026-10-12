@@ -329,7 +329,6 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       <section class="aibar" id="aiPanel" hidden aria-label="Revisión con Claude">
         <div class="aibar-row">
           <button class="btn sm" id="aiBtn" type="button" title="Claude lee los ficheros de más riesgo y busca lo que las reglas no reconocen. Puede añadir avisos, pero nunca rebaja el veredicto.">Revisar con Claude</button>
-          <button class="btn sm ghost" id="aiConnBtn" type="button" hidden>Conectar Claude</button>
           <button class="btn sm ghost" id="aiToggle" type="button" hidden aria-expanded="true" aria-controls="aiOut">Ocultar revisión</button>
           <span id="aiLamp" class="lamp" hidden></span>
           <span class="sendline" id="aiSend"></span>
@@ -869,7 +868,6 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   }
 
   $('#connBtn').addEventListener('click', openConn);
-  $('#aiConnBtn').addEventListener('click', openConn);
   $('#connClose').addEventListener('click', () => $('#connDlg').close());
   $('#connForm').addEventListener('submit', (ev) => {
     ev.preventDefault();
@@ -952,17 +950,15 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     if (current.aiReview) { showAiResult(current.aiReview); return; }
     $('#aiOut').hidden = true;
     $('#aiToggle').hidden = true;
-    $('#aiConnBtn').hidden = true;
     if (LIVE && !CONN.connected) {
-      $('#aiSend').textContent = 'Claude no está conectado. Conéctalo con tu cuenta (Claude Code) o con una clave de la API para activar esta revisión.';
+      $('#aiSend').textContent = 'Claude no está conectado. Conéctalo con el botón «Conectar Claude» de arriba (tu cuenta con Claude Code o una clave de la API) para activar esta revisión.';
       btn.hidden = true;
-      $('#aiConnBtn').hidden = false;
       return;
     }
     const n = `${info.files} fichero${info.files === 1 ? '' : 's'}${info.decoded ? ` y ${info.decoded} payload${info.decoded === 1 ? '' : 's'} descifrado${info.decoded === 1 ? '' : 's'}` : ''}`;
     if (current.web) {
       if (!SAMPLE) { $('#aiSend').textContent = 'La revisión con Claude solo funciona al abrir esta página en claude.ai.'; btn.hidden = true; return; }
-      if (!CONN.connected) { $('#aiSend').textContent = `Conecta tu cuenta de claude.ai para que Claude revise ${n} de este repo.`; btn.hidden = true; $('#aiConnBtn').hidden = false; return; }
+      if (!CONN.connected) { $('#aiSend').textContent = `Conecta tu cuenta de claude.ai con el botón «Conectar Claude» de arriba para que Claude revise ${n} de este repo.`; btn.hidden = true; return; }
       $('#aiSend').textContent = `Se enviarán ${n} (${fmtBytes(info.chars || 0)}) a Claude con tu cuenta de claude.ai. Nada se ejecuta.`;
       return;
     }
@@ -971,7 +967,6 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       : CONN.connected
         ? 'Demo: Claude revisará de verdad los hallazgos simulados de este ejemplo con tu cuenta de claude.ai.'
         : 'Demo: la respuesta está simulada. Conecta tu cuenta de Claude para que la revisión sea real.';
-    if (!LIVE && !CONN.connected && SAMPLE) $('#aiConnBtn').hidden = false;
   }
 
   function showAiResult(r) {

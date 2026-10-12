@@ -41,6 +41,8 @@ test('no borra una carpeta que no sea una demo generada', (t) => {
 test('typosquatting: "color" es legítimo, "colrs" no', () => {
   const { typosquatCheck } = require('../lib/deps');
   assert.equal(typosquatCheck([{ name: 'color', ecosystem: 'npm', file: 'package-lock.json' }]).length, 0);
+  assert.equal(typosquatCheck([{ name: 'coffeescript', ecosystem: 'npm', file: 'package-lock.json' }]).length, 0);
+  assert.equal(typosquatCheck([{ name: 'grequests', ecosystem: 'PyPI', file: 'requirements.txt' }]).length, 0);
   assert.equal(typosquatCheck([{ name: 'colrs', ecosystem: 'npm', file: 'package.json' }]).length, 1);
 });
 
