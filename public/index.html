@@ -1,4 +1,5 @@
 <title>Ominous Security</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3CradialGradient id='i' cx='50%25' cy='50%25' r='50%25'%3E%3Cstop offset='0' stop-color='%23000'/%3E%3Cstop offset='.45' stop-color='%232a0a3a'/%3E%3Cstop offset='.8' stop-color='%23ff2fb3'/%3E%3Cstop offset='1' stop-color='%2322e6ff'/%3E%3C/radialGradient%3E%3CclipPath id='l'%3E%3Cpath d='M6 32 Q32 10 58 32 Q32 54 6 32 Z'/%3E%3C/clipPath%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='%2307060d'/%3E%3Ccircle cx='32' cy='32' r='29' fill='none' stroke='%23ff2fb3' stroke-width='2'/%3E%3Cpath d='M6 32 Q32 10 58 32 Q32 54 6 32 Z' fill='%2305040a'/%3E%3Cg clip-path='url%28%23l%29'%3E%3Ccircle cx='32' cy='32' r='12' fill='url%28%23i%29'/%3E%3Ccircle cx='32' cy='32' r='4.6' fill='%23000'/%3E%3Ccircle cx='29.6' cy='29.6' r='1.6' fill='%23fff'/%3E%3C/g%3E%3Cpath d='M6 32 Q32 10 58 32 Q32 54 6 32 Z' fill='none' stroke='%2322e6ff' stroke-width='2.6' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
 /* Fuentes autoalojadas (OFL, ver fonts/OFL.txt): la página no pide nada a terceros */
 @font-face { font-family: "Chakra Petch"; font-weight: 500; font-display: swap; src: url(fonts/chakra-petch-500.woff2) format("woff2"); }
@@ -53,6 +54,7 @@ button, input { font: inherit; }
 header.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand svg { flex: none; }
+.brand .logo { border-radius: 11px; box-shadow: 0 0 0 1px color-mix(in srgb, #ff2fb3 35%, transparent), 0 6px 18px -8px #ff2fb3; }
 .brand h1 { font-size: 22px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
 .brand small { display: block; color: var(--muted); font-family: var(--f-body); font-size: 12px; letter-spacing: 0; text-transform: none; font-weight: 400; }
 .mode { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
@@ -267,7 +269,8 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
 <div class="wrap">
   <header class="top">
     <div class="brand">
-      <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><path d="M17 3 30 8v8c0 8-5.5 13.5-13 15C9.5 29.5 4 24 4 16V8z" fill="none" stroke="var(--accent)" stroke-width="2"/><ellipse cx="17" cy="16" rx="7.5" ry="4.5" fill="none" stroke="var(--fg)" stroke-width="1.6"/><circle cx="17" cy="16" r="2.2" fill="var(--bad)"/></svg>
+      <!-- Logo: el ojo de OminousEyeCV (AlexDBdevops, MIT) -->
+      <svg class="logo" width="40" height="40" viewBox="0 0 64 64" aria-hidden="true"><defs><radialGradient id="eyeIris" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#000"/><stop offset=".45" stop-color="#2a0a3a"/><stop offset=".8" stop-color="#ff2fb3"/><stop offset="1" stop-color="#22e6ff"/></radialGradient><clipPath id="eyeLid"><path d="M6 32 Q32 10 58 32 Q32 54 6 32 Z"/></clipPath></defs><rect width="64" height="64" rx="14" fill="#07060d"/><circle cx="32" cy="32" r="29" fill="none" stroke="#ff2fb3" stroke-width="2"/><path d="M6 32 Q32 10 58 32 Q32 54 6 32 Z" fill="#05040a"/><g clip-path="url(#eyeLid)"><circle cx="32" cy="32" r="12" fill="url(#eyeIris)"/><circle cx="32" cy="32" r="4.6" fill="#000"/><circle cx="29.6" cy="29.6" r="1.6" fill="#fff"/></g><path d="M6 32 Q32 10 58 32 Q32 54 6 32 Z" fill="none" stroke="#22e6ff" stroke-width="2.6" stroke-linejoin="round"/></svg>
       <div><h1>Ominous Security</h1><small>Revisa un repositorio de GitHub antes de clonarlo</small></div>
     </div>
     <div class="top-right">
