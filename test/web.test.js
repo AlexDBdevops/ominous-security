@@ -208,11 +208,23 @@ test('web: en la página (sin worker) el análisis lleva plazo y lo dice en la c
   const dir = fx.trapRepo2();
   t.after(() => fx.rm(dir));
   const om = loadBundle(fakeGithub(dir));
-  const r = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', budgetMs: 5 * 60 * 1000, signal: new AbortController().signal });
+  const r = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', deadline: Date.now() + 5 * 60 * 1000, inPage: true, signal: new AbortController().signal });
   assert.ifError(r.error && new Error(r.error.message));
-  assert.ok(r.result.coverage.some((c) => c.label === 'Corte por tiempo' && /5 minutos/.test(c.detail)));
+  assert.ok(r.result.coverage.some((c) => c.label === 'Corte por tiempo' && /plazo/.test(c.detail)));
   const ctl = new AbortController();
   ctl.abort();
-  const gone = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', budgetMs: 5 * 60 * 1000, signal: ctl.signal });
+  const gone = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', deadline: Date.now() + 5 * 60 * 1000, inPage: true, signal: ctl.signal });
   assert.match(gone.error.message, /cancelado/, 'al lanzar otro análisis el anterior se cancela');
+});
+
+test('web: en el worker, con el plazo agotado devuelve lo revisado en vez de un error', async (t) => {
+  const dir = fx.trapRepo2();
+  t.after(() => fx.rm(dir));
+  const om = loadBundle(fakeGithub(dir));
+  const r = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', deadline: Date.now() - 1 });
+  assert.ifError(r.error && new Error(r.error.message));
+  assert.ok(r.result.threats.some((x) => x.rule === 'partial-scan' && /tiempo/.test(x.title)));
+  assert.ok(!r.result.coverage.some((c) => c.label === 'Corte por tiempo'), 'en el worker no hace falta el aviso de la página');
+  assert.ok(r.result.dependencies.skipped);
+  assert.ok(r.result.coverage.some((c) => /OSV/.test(c.label) && c.status === 'skip' && /tiempo/.test(c.detail)));
 });

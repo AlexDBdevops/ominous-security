@@ -72,8 +72,7 @@ Todo se configura con variables de entorno. Con Docker, ponlas en un fichero `.e
 | `ALLOW_ANY_HOST` | — | `1` acepta cualquier nombre de host. Desaconsejado; también exige token |
 | `ALLOW_ANY_DEST` | — | `1` permite clonar fuera de `CLONE_DIR`. Solo funciona si la app no está expuesta |
 | `HISTORY_COMMITS` | `300` | Commits del historial que se revisan |
-| `OMINOUS_PREP_BUDGET_MS` | `720000` | Tiempo total para historial, submódulos y herramientas externas. Si se agota, lo que falte se salta y la cobertura lo dice |
-| `ANALYSIS_TIMEOUT_MS` | `300000` | Tiempo máximo de un análisis |
+| `ANALYSIS_TIMEOUT_MS` | `1200000` | Tiempo máximo de todo el análisis: clonar, historial, submódulos, herramientas externas y código. Las fases previas paran antes para dejar tiempo al código (hasta 6 minutos), y lo que se salta por tiempo aparece en la cobertura con un resultado parcial en vez de un error |
 | `MAX_REPO_MB` | `1024` | Tamaño máximo del repo, según GitHub |
 | `MAX_CONCURRENT` | `2` | Análisis simultáneos |
 | `RATE_LIMIT` | `30` | Análisis por IP cada 10 minutos |
@@ -195,7 +194,7 @@ En las ediciones web, `public/analyzer.js` (el mismo analizador de `lib/`, empaq
 1. Pide los metadatos del repo y el commit de la rama a la API de GitHub, y la lista de ficheros de ese commit.
 2. Descarga cada fichero desde `raw.githubusercontent.com` en ese commit exacto, a la memoria de la pestaña. Nada se escribe en disco ni se ejecuta.
 3. Pasa las mismas reglas que el servidor (los tests comprueban que los hallazgos son idénticos) y consulta OSV.dev, OpenSSF Scorecard, deps.dev, EPSS y los registros de npm y PyPI (ver [Más allá del repo](#más-allá-del-repo)).
-4. Si el análisis pasa de 5 minutos, la página corta el worker (protege de ficheros diseñados para colgar analizadores).
+4. El análisis tiene 5 minutos. Hacia los 3 minutos y 45 segundos deja de leer ficheros y de hacer consultas y devuelve lo revisado, marcado como incompleto; si a los 5 minutos sigue atascado (un fichero diseñado para colgar analizadores), la página corta el worker. Si el navegador no deja usar un worker, el análisis corre en la propia página con el plazo completo y lee como mucho 1,5 MB de cada fichero.
 
 Para clonar, la página da el comando que deja el clon en el commit analizado y, si se pide, descarga un parche con los arreglos automáticos para aplicarlo con `git apply`.
 

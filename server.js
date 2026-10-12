@@ -21,12 +21,17 @@ const conn = require('./lib/connection');
 const { parseGithubUrl, repoMetaFrom, parseScorecard, releasePass, movedPass, scorecardCoverage } = require('./lib/github');
 const HISTORY_COMMITS = Number(process.env.HISTORY_COMMITS) || 300;
 const MAX_SUBMODULES = 8;
-const ANALYSIS_TIMEOUT = Number(process.env.ANALYSIS_TIMEOUT_MS) || 5 * 60 * 1000;
+// Un solo límite para todo el análisis: clonar, historial, submódulos, herramientas
+// externas y código. Las fases previas paran antes para dejar tiempo al código
+// (CODE_RESERVE), y el analizador para solo un poco antes del corte duro (SOFT_MARGIN)
+// para devolver lo revisado en vez de un error. El corte duro queda para un fichero
+// que lo cuelgue. Lo que se salta por tiempo aparece en la cobertura.
+const ANALYSIS_TIMEOUT = Number(process.env.ANALYSIS_TIMEOUT_MS) || 20 * 60 * 1000;
+const CODE_RESERVE = Math.min(6 * 60 * 1000, ANALYSIS_TIMEOUT * 0.4);
+const SOFT_MARGIN = Math.min(2 * 60 * 1000, ANALYSIS_TIMEOUT * 0.15);
+const msLeft = (until, cap = Infinity) => Math.max(1000, Math.min(cap, until - Date.now()));
 const WATCH = process.env.OMINOUS_WATCH !== '0';
 const WATCH_HOURS = Number(process.env.OMINOUS_WATCH_HOURS) || 24;
-// Tiempo total para las fases previas al análisis (historial, submódulos, herramientas
-// externas). Pasado este tiempo se saltan, y la cobertura lo dice.
-const PREP_BUDGET = Number(process.env.OMINOUS_PREP_BUDGET_MS) || 12 * 60 * 1000;
 
 // Versiones de git con los fallos de clonado de 2025 corregidos (CVE-2025-48384 y otros):
 // 2.43.7, 2.44.4, 2.45.4, 2.46.4, 2.47.3, 2.48.2, 2.49.1 y 2.50.1 en adelante.
@@ -45,14 +50,17 @@ function gitVersionCoverage(extra) {
   if (gitVersion && gitPatched(gitVersion) === false) extra.coverage.push({ label: 'Tu versión de git', status: 'partial', detail: `${gitVersion} tiene fallos conocidos que ejecutan código al clonar con submódulos (CVE-2025-48384). La herramienta clona sin submódulos, pero actualiza git antes de usar --recursive.` });
 }
 
-// Análisis en un hilo aparte con tiempo máximo.
-function runAnalysis(root, meta, log, extra) {
+// Análisis en un hilo aparte hasta la hora límite `until`: el analizador para solo un
+// poco antes y, si algo lo cuelga, se corta al llegar.
+function runAnalysis(root, meta, log, extra, until) {
+  if (!Number.isFinite(until)) until = Date.now() + ANALYSIS_TIMEOUT;
   return new Promise((resolve, reject) => {
-    const w = new Worker(path.join(__dirname, 'lib', 'worker.js'), { workerData: { root, meta, extra } });
+    const soft = until - Math.min(SOFT_MARGIN, (until - Date.now()) / 4);
+    const w = new Worker(path.join(__dirname, 'lib', 'worker.js'), { workerData: { root, meta, extra: { ...extra, deadline: soft } } });
     const timer = setTimeout(() => {
       w.terminate();
-      reject(Object.assign(new Error(`El análisis superó ${Math.round(ANALYSIS_TIMEOUT / 60000)} minutos y se ha cortado. Puede ser un repo muy grande o un fichero diseñado para bloquear analizadores: trátalo como sospechoso.`), { status: 504 }));
-    }, ANALYSIS_TIMEOUT);
+      reject(Object.assign(new Error(`El análisis se quedó bloqueado y se ha cortado al llegar al tiempo máximo (${Math.round(ANALYSIS_TIMEOUT / 60000)} minutos en total, ANALYSIS_TIMEOUT_MS). Suele ser un fichero diseñado para bloquear analizadores: trátalo como sospechoso.`), { status: 504 }));
+    }, msLeft(until));
     w.on('message', (m) => {
       if (m.log) log(m.log);
       else { clearTimeout(timer); w.terminate(); if (m.error) reject(new Error(m.error)); else resolve(m.result); }
@@ -126,6 +134,8 @@ async function analyze(url) {
   if (!ref) throw Object.assign(new Error('URL no válida. Usa algo como https://github.com/usuario/repositorio'), { status: 400 });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ominous-'));
   const dir = path.join(tmp, 'repo');
+  const until = Date.now() + ANALYSIS_TIMEOUT;
+  const prepUntil = until - CODE_RESERVE;
   try {
     const meta0 = await repoMeta(ref.owner, ref.repo);
     if (meta0 && meta0.size_kb > MAX_REPO_MB * 1024) {
@@ -135,8 +145,8 @@ async function analyze(url) {
     const args = ['clone', '--depth', '1', '--no-tags', '--single-branch', '--no-recurse-submodules'];
     if (ref.branch) args.push('--branch', ref.branch);
     args.push('--', ref.cloneUrl, dir);
-    try { await git(args); } catch (e) {
-      throw Object.assign(new Error(`No se pudo descargar el repositorio (¿existe y es público?). ${e.message}`), { status: 422 });
+    try { await git(args, { timeout: msLeft(prepUntil) }); } catch (e) {
+      throw Object.assign(new Error(`No se pudo descargar el repositorio (¿existe y es público?${Date.now() > prepUntil ? ' La descarga no terminó a tiempo.' : ''}). ${e.message}`), { status: 422 });
     }
     const commit = await git(['-C', dir, 'rev-parse', 'HEAD']);
     const branch = ref.branch || await git(['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD']);
@@ -145,17 +155,16 @@ async function analyze(url) {
     const extra = { vulns: [], threats: [], coverage: [], ref: { owner: ref.owner, repo: ref.repo, commit } };
     movedPass(ref, meta, extra);
     scorecardCoverage(meta, extra);
-    const deadline = Date.now() + PREP_BUDGET;
     const timed = async (label, fn) => {
-      if (Date.now() > deadline) { extra.coverage.push({ label, status: 'skip', detail: 'saltado: el análisis llevaba demasiado tiempo (OMINOUS_PREP_BUDGET_MS)' }); return; }
+      if (Date.now() > prepUntil) { extra.coverage.push({ label, status: 'skip', detail: 'saltado: se acabó el tiempo del análisis (ANALYSIS_TIMEOUT_MS)' }); return; }
       await fn();
     };
     gitVersionCoverage(extra);
-    await timed('Historial de git', () => historyPass(dir, extra, log));
-    await timed('Submódulos', () => submodulePass(fs.realpathSync.native(dir), tmp, ref, extra, log, deadline));
-    await timed('Herramientas externas', () => externalPass(fs.realpathSync.native(dir), tmp, extra, log));
+    await timed('Historial de git', () => historyPass(dir, extra, log, prepUntil));
+    await timed('Submódulos', () => submodulePass(fs.realpathSync.native(dir), tmp, ref, extra, log, prepUntil));
+    await timed('Herramientas externas', () => externalPass(fs.realpathSync.native(dir), tmp, extra, log, prepUntil));
     releasePass(meta, extra);
-    const { aiContext, ...result } = await runAnalysis(fs.realpathSync.native(dir), meta, log, extra);
+    const { aiContext, ...result } = await runAnalysis(fs.realpathSync.native(dir), meta, log, extra, until);
     const id = crypto.randomUUID();
     const payload = {
       id, repo: { owner: ref.owner, name: ref.repo, branch, commit, url: `https://github.com/${ref.owner}/${ref.repo}`, meta }, ...result,
@@ -171,11 +180,11 @@ async function analyze(url) {
 }
 
 // Historial: amplía el clon superficial y busca secretos/malware en líneas borradas.
-async function historyPass(dir, extra, log) {
+async function historyPass(dir, extra, log, until) {
   log(`Descargando historial (hasta ${HISTORY_COMMITS} commits)…`);
   let deepened = true;
-  try { await git(['-C', dir, 'fetch', '--deepen', String(HISTORY_COMMITS - 1), '--no-tags', '--no-recurse-submodules', 'origin'], { timeout: 120000 }); } catch { deepened = false; }
-  const h = await scanHistory(GIT_SAFE, dir, { commits: HISTORY_COMMITS, env: GIT_ENV });
+  try { await git(['-C', dir, 'fetch', '--deepen', String(HISTORY_COMMITS - 1), '--no-tags', '--no-recurse-submodules', 'origin'], { timeout: msLeft(until, 120000) }); } catch { deepened = false; }
+  const h = await scanHistory(GIT_SAFE, dir, { commits: HISTORY_COMMITS, env: GIT_ENV, timeoutMs: msLeft(until, 120000) });
   for (const f of h.findings) (f.kind === 'vuln' ? extra.vulns : extra.threats).push(f);
   extra.coverage.push({
     label: 'Historial de git', status: !deepened || h.truncated || h.error || h.scanned >= HISTORY_COMMITS ? 'partial' : 'ok',
@@ -184,7 +193,7 @@ async function historyPass(dir, extra, log) {
 }
 
 // Submódulos: comprueba a dónde apuntan y analiza los de GitHub en el commit exacto que fija el repo.
-async function submodulePass(root, tmp, ref, extra, log, deadline = Infinity) {
+async function submodulePass(root, tmp, ref, extra, log, deadline) {
   const subs = parseGitmodules(root);
   if (!subs.length) return;
   let analyzed = 0;
@@ -203,9 +212,9 @@ async function submodulePass(root, tmp, ref, extra, log, deadline = Infinity) {
       log(`Analizando submódulo ${sm.path}…`);
       await git(['init', '-q', sdir]);
       await git(['-C', sdir, 'remote', 'add', 'origin', sub.cloneUrl]);
-      await git(['-C', sdir, 'fetch', '--depth', '1', '--no-tags', 'origin', sha || 'HEAD'], { timeout: 120000 });
+      await git(['-C', sdir, 'fetch', '--depth', '1', '--no-tags', 'origin', sha || 'HEAD'], { timeout: msLeft(deadline, 120000) });
       await git(['-C', sdir, 'checkout', '-q', 'FETCH_HEAD']);
-      const r = await runAnalysis(fs.realpathSync.native(sdir), null, () => {}, {});
+      const r = await runAnalysis(fs.realpathSync.native(sdir), null, () => {}, {}, deadline);
       const pre = (f) => ({ ...f, file: f.file ? `${sm.path}/${f.file}` : sm.path, title: `${f.title} [submódulo]` });
       extra.vulns.push(...r.vulnerabilities.map(pre));
       extra.threats.push(...r.threats.map(pre));
@@ -450,7 +459,7 @@ const server = http.createServer(async (req, res) => {
     if (!res.headersSent) send(res, e.status || 500, { error: e.status ? e.message : 'Error interno' });
   }
 });
-// El análisis puede durar hasta ANALYSIS_TIMEOUT; las cabeceras, poco.
+// El análisis entero puede durar hasta ANALYSIS_TIMEOUT; las cabeceras, poco.
 server.requestTimeout = ANALYSIS_TIMEOUT + 60000;
 server.headersTimeout = 15000;
 

@@ -113,7 +113,9 @@ test('con plazo agotado para entre ficheros y lo marca como análisis incompleto
   const code = r.coverage.find((c) => c.label === 'Código del último commit');
   assert.equal(code.status, 'partial');
   assert.match(code.detail, /^0 ficheros leídos/);
-  assert.equal(r.coverage.filter((c) => c.status === 'skip' && /se acabó el tiempo/.test(c.detail)).length, 3);
+  // Tres comprobaciones que releen ficheros, dependencias y paquete publicado
+  assert.equal(r.coverage.filter((c) => c.status === 'skip' && /se acabó el tiempo/.test(c.detail)).length, 5);
+  assert.ok(r.dependencies.skipped, 'la web dice "sin revisar", no "sin ficheros de dependencias"');
   assert.notEqual(r.summary.overall, 'green');
 });
 
