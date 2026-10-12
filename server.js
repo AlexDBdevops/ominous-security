@@ -14,6 +14,7 @@ const { applyAutoFixes } = require('./lib/analyzer');
 const { summarizeDiff } = require('./lib/summary');
 const { scanHistory } = require('./lib/history');
 const { parseGitmodules } = require('./lib/extra');
+const { externalPass } = require('./lib/external');
 const ai = require('./lib/ai');
 const conn = require('./lib/connection');
 const { parseGithubUrl, repoMetaFrom, parseScorecard, releasePass, movedPass, scorecardCoverage } = require('./lib/github');
@@ -122,6 +123,7 @@ async function analyze(url) {
     scorecardCoverage(meta, extra);
     await historyPass(dir, extra, log);
     await submodulePass(fs.realpathSync(dir), tmp, ref, extra, log);
+    await externalPass(fs.realpathSync(dir), tmp, extra, log);
     releasePass(meta, extra);
     const { aiContext, ...result } = await runAnalysis(fs.realpathSync(dir), meta, log, extra);
     const id = crypto.randomUUID();

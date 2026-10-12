@@ -76,6 +76,10 @@ Todo se configura con variables de entorno. Con Docker, ponlas en un fichero `.e
 | `MAX_CONCURRENT` | `2` | Análisis simultáneos |
 | `RATE_LIMIT` | `30` | Análisis por IP cada 10 minutos |
 | `OMINOUS_OFFLINE` | — | `1` no consulta OSV.dev (útil en tests o sin conexión) |
+| `OMINOUS_EXTERNAL` | — | `0` no usa Gitleaks, Semgrep ni Trivy aunque estén instalados (ver [Herramientas externas](#herramientas-externas-opcionales)) |
+| `OMINOUS_GITLEAKS_BIN`, `OMINOUS_SEMGREP_BIN`, `OMINOUS_TRIVY_BIN` | el del `PATH` | Ruta de cada herramienta externa |
+| `OMINOUS_SEMGREP_CONFIG` | `p/default` | Reglas de Semgrep: un conjunto del registro o un fichero o carpeta local (sin conexión con semgrep.dev) |
+| `OMINOUS_EXTERNAL_TIMEOUT_MS` | `240000` | Tiempo máximo de cada herramienta externa |
 
 ## Despliegue
 
@@ -160,6 +164,18 @@ Configuración, una sola vez (puedes reutilizar el token y la organización del 
 Sin estas credenciales el job solo genera la demo y no despliega nada. La URL queda en `https://ominous-security.pages.dev` (o la que asigne Cloudflare si el nombre está ocupado; sale en el resumen del job). Para cambiar el nombre, edita `project_name` en `infra/main.tf`.
 
 Para probarla en local: `npm run build:site && npx serve dist`.
+
+## Herramientas externas (opcionales)
+
+En el servidor local, si tienes instaladas estas herramientas de código abierto, se pasan también sobre el clon temporal y sus hallazgos se suman a los de las reglas propias, cada uno con la explicación de la propia herramienta (regla, CWE y enlaces):
+
+| Herramienta | Qué añade | Instalar |
+|---|---|---|
+| [Gitleaks](https://github.com/gitleaks/gitleaks) | más de un centenar de reglas de secretos, también en el historial descargado | `brew install gitleaks` |
+| [Semgrep](https://github.com/semgrep/semgrep) | el conjunto `p/default`: cientos de reglas de seguridad en más de 30 lenguajes. Descarga las reglas de semgrep.dev, con las métricas desactivadas | `pipx install semgrep` |
+| [Trivy](https://github.com/aquasecurity/trivy) | secretos y errores de configuración en Dockerfile, Kubernetes, Terraform, CloudFormation y Helm | `brew install trivy` |
+
+Ninguna ejecuta código del repo: solo leen ficheros. Se lanzan sin shell, con tiempo máximo y un entorno mínimo, en paralelo. Si una no está instalada, no aparece; si falla, sale como "no revisado". La imagen de Docker no las incluye. No están en la versión web porque no se pueden ejecutar en un navegador.
 
 ## Versión web
 
@@ -334,6 +350,7 @@ lib/decoder.js       ingeniería inversa de payloads codificados o cifrados
 lib/deps.js          dependencias (OSV.dev) y typosquatting
 lib/extra.js         autoejecutables, agentes de IA, lockfiles, señuelos, ZIP, imágenes, homoglifos
 lib/history.js       historial de git
+lib/external.js      Gitleaks, Semgrep y Trivy si están instalados (opcional)
 lib/summary.js       resumen del diff de los arreglos (Claude o local)
 lib/ai.js            revisión con IA: selección de ficheros, prompt, esquema y validación
 lib/connection.js    conexión con Claude: clave de la API o Claude Code con tu cuenta
