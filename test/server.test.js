@@ -20,11 +20,26 @@ test('el destino del clon no puede salir de CLONE_DIR', () => {
 });
 
 test('parseGithubUrl acepta formatos válidos', () => {
-  for (const u of ['https://github.com/expressjs/express', 'github.com/expressjs/express', 'git@github.com:expressjs/express.git', 'https://github.com/expressjs/express/tree/master']) {
+  for (const u of ['https://github.com/expressjs/express', 'github.com/expressjs/express', 'git@github.com:expressjs/express.git', 'https://github.com/expressjs/express/tree/master',
+    '  https://github.com/expressjs/express/  ', 'www.github.com/expressjs/express', 'https://github.com/expressjs/express?tab=readme-ov-file#readme', 'expressjs/express',
+    'https://github.com/expressjs/express/blob/master/lib/express.js']) {
     const r = parseGithubUrl(u);
     assert.equal(r.owner, 'expressjs', u);
     assert.equal(r.repo, 'express', u);
   }
+  assert.equal(parseGithubUrl('carpeta/otra', { short: false }), null, 'en submódulos "a/b" es una ruta, no un repo');
+});
+
+test('enlace a una carpeta: se elige la rama más larga que exista', async () => {
+  const { resolveBranch } = require('../lib/github');
+  const ref = parseGithubUrl('https://github.com/nodejs/node/tree/v22.x/lib/internal');
+  assert.deepEqual(ref.branchCandidates, ['v22.x/lib/internal', 'v22.x/lib', 'v22.x']);
+  assert.equal((await resolveBranch(ref, async () => ['main', 'v22.x', 'v22.x-staging'])).branch, 'v22.x');
+  assert.equal((await resolveBranch(ref, async () => ['v22.x', 'v22.x/lib'])).branch, 'v22.x/lib', 'ramas con "/"');
+  assert.equal((await resolveBranch(ref, async () => { throw new Error('sin red'); })).branch, 'v22.x/lib/internal', 'sin poder comprobarlo se deja como estaba');
+  const file = parseGithubUrl('https://github.com/a/b/blob/main/src/mi%20fichero.py');
+  assert.deepEqual(file.branchCandidates, ['main/src', 'main'], 'los tramos con caracteres raros no son candidatos');
+  assert.equal(parseGithubUrl('https://github.com/a/b/tree/main').branchCandidates.length, 1);
 });
 
 test('parseGithubUrl rechaza URLs peligrosas o ajenas', () => {

@@ -4,7 +4,7 @@
 // fichero desde raw.githubusercontent.com, todo en el commit exacto analizado.
 // Nada se ejecuta: los ficheros solo se cargan en el sistema de ficheros en memoria.
 const fs = require('fs');
-const { repoMetaFrom, parseScorecard } = require('../lib/github');
+const { repoMetaFrom, parseScorecard, resolveBranch } = require('../lib/github');
 const { parseGitmodules } = require('../lib/extra');
 
 const ROOT = '/repo';
@@ -133,6 +133,16 @@ async function fetchRepoInner(ref, { log, f }) {
   const [o2, n2] = String(info.full_name || `${owner}/${repo}`).split('/');
   const real = `/repos/${encodeURIComponent(o2)}/${encodeURIComponent(n2)}`;
 
+  // Enlace a una carpeta o a un fichero (/tree/rama/carpeta): la rama (o etiqueta) más larga
+  // que exista. Basta con pedir las que empiezan por el primer tramo.
+  ref = await resolveBranch(ref, async (cands) => {
+    const names = [];
+    for (const kind of ['heads', 'tags']) {
+      const m = await api(`${real}/git/matching-refs/${kind}/${enc(cands[cands.length - 1])}`, { f });
+      if (m.ok && Array.isArray(m.json)) names.push(...m.json.map((x) => String(x.ref).replace(/^refs\/(heads|tags)\//, '')));
+    }
+    return names;
+  });
   const branch = ref.branch || info.default_branch;
   const c = await api(`${real}/commits/${enc(branch)}`, { f, accept: 'application/vnd.github.sha' });
   if (c.status === 409) throw new GhError(`${o2}/${n2} está vacío.`, { status: 409, reasons: ['El repositorio existe pero no tiene ningún commit: no hay código que analizar.'] });
