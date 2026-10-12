@@ -67,6 +67,22 @@ test('servidor HTTP', async (t) => {
     const cross = await req('POST', '/api/ai-connection', { ...json, origin: 'https://evil.example' }, JSON.stringify({ method: 'none' }));
     assert.equal(cross.status, 403);
   });
+  await t.test('la CSP autoriza el script por hash y no carga nada de terceros', async () => {
+    const r = await req('GET', '/', host);
+    const csp = r.headers['content-security-policy'];
+    assert.match(csp, /script-src 'sha256-[A-Za-z0-9+/=]+'/);
+    assert.ok(!/script-src[^;]*unsafe-inline/.test(csp), 'sin unsafe-inline en scripts');
+    assert.ok(!/https?:/.test(csp), 'sin orígenes externos');
+    assert.ok(!/fonts\.googleapis|fonts\.gstatic/.test(r.body));
+  });
+  await t.test('sirve solo las fuentes locales', async () => {
+    const ok = await req('GET', '/fonts/jetbrains-mono.woff2', host);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers['content-type'], 'font/woff2');
+    for (const bad of ['/fonts/../server.js', '/fonts/%2e%2e%2fserver.js', '/fonts/OFL.txt', '/fonts/nope.woff2']) {
+      assert.equal((await req('GET', bad, host)).status, 404, bad);
+    }
+  });
   await t.test('sirve la interfaz con cabeceras de seguridad', async () => {
     const r = await req('GET', '/', host);
     assert.equal(r.status, 200);

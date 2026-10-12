@@ -197,9 +197,9 @@ Seguridad de la ventana:
 - **Exposición:** si se abre a otros nombres (`ALLOWED_HOSTS`/`ALLOW_ANY_HOST`) no arranca sin `OMINOUS_TOKEN`. El token se compara en tiempo constante y se guarda en una cookie `HttpOnly`, `SameSite=Strict` (y `Secure` detrás de HTTPS).
 - **Disco:** los clones solo pueden ir dentro de `CLONE_DIR`, también si hay enlaces simbólicos por medio. Así se evita clonar en carpetas que se ejecutan solas, como `~/.vim/pack/*/start` o `~/.config/autostart`.
 - **Abuso:** límite de análisis por IP, de análisis simultáneos y de tamaño del repo. Cada análisis corre en un hilo aparte con tiempo máximo, para que un fichero diseñado para bloquear analizadores (ReDoS) no deje colgada la app.
-- **Navegador:** cabeceras `Content-Security-Policy` estricta, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy` y `Permissions-Policy`.
+- **Navegador:** `Content-Security-Policy` estricta (el único script de la página se autoriza por su hash SHA-256, calculado al arrancar, y no se carga nada de terceros: las fuentes van en `public/fonts`), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy` y `Permissions-Policy`.
 - **Procesos:** URLs validadas de forma estricta, git sin shell y endurecido, y errores internos que no exponen detalles.
-- **Proyecto:** CI con CodeQL, autoescaneo, `npm audit`, Trivy sobre la imagen y Dependabot, usando solo acciones oficiales de GitHub.
+- **Proyecto:** CI con CodeQL, autoescaneo, `npm audit`, Trivy sobre la imagen y Dependabot, usando solo acciones oficiales de GitHub fijadas por SHA (con la versión en un comentario; Dependabot las actualiza) y `persist-credentials: false` en cada checkout.
 
 ## Escáner por línea de comandos
 
@@ -286,6 +286,7 @@ lib/ai.js            revisión con IA: selección de ficheros, prompt, esquema y
 lib/connection.js    conexión con Claude: clave de la API o Claude Code con tu cuenta
 lib/worker.js        hilo de análisis con tiempo máximo
 public/index.html    interfaz (sin servidor funciona en modo demo)
+public/fonts/        fuentes autoalojadas (OFL)
 Dockerfile           imagen (usuario sin privilegios, tini, healthcheck)
 compose.yaml         despliegue local endurecido; compose.lan.yaml lo abre a tu red con token
 scripts/local.sh     construir y arrancar en local (local.ps1 en Windows)
