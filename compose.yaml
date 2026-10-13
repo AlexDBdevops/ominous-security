@@ -10,6 +10,11 @@
 # exterior es la pasarela (lib/gateway.js): reenvía lo que abres en el navegador y hace de
 # proxy de salida que solo deja pasar HTTPS hacia direcciones públicas. Ni tu equipo, ni tu
 # red local, ni el servicio de metadatos de la nube son alcanzables desde la app.
+#
+# Análisis aparte: el repo ajeno se clona y se analiza en el contenedor "scanner"
+# (lib/scanner.js), con otro usuario, sin tu carpeta de clones y sin GITHUB_TOKEN ni
+# ANTHROPIC_API_KEY. Si un repo explotara un fallo de git o de una herramienta, se quedaría
+# ahí: la app comprueba lo que le devuelve y solo acepta conexiones de la pasarela.
 
 name: ominous-security
 
@@ -30,8 +35,12 @@ services:
       # Todo el tráfico de salida (app, git, Semgrep, Trivy) pasa por la pasarela
       HTTPS_PROXY: http://gateway:3128
       HTTP_PROXY: http://gateway:3128
-      NO_PROXY: ""
+      # El scanner está en la misma red interna: la app le habla directamente
+      NO_PROXY: scanner
       NODE_USE_ENV_PROXY: "1"
+      OMINOUS_SCANNER_URL: http://scanner:8090
+      # Entrada solo desde la pasarela (PROXY protocol, con la IP real de quien se conecta)
+      OMINOUS_PROXY_FROM: gateway
     volumes:
       - "${OMINOUS_CLONES:-./clones}:/data"
       - ominous-tmp:/tmp
@@ -56,6 +65,7 @@ services:
       - "127.0.0.1:${OMINOUS_PORT:-8080}:8080"
     environment:
       GATEWAY_APP: app:8080
+      GATEWAY_PROXY_PROTOCOL: "1"
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -65,6 +75,35 @@ services:
     # El healthcheck de la imagen pregunta a la app a través de la propia pasarela
     depends_on: [app]
 
+  scanner:
+    build: .
+    image: ominous-security:local
+    restart: unless-stopped
+    command: ["node", "lib/scanner.js"]
+    # Otro usuario que la app: no puede leer sus procesos ni sus ficheros
+    user: "${OMINOUS_SCANNER_UID:-1001}:${OMINOUS_SCANNER_UID:-1001}"
+    networks: [interna]
+    environment:
+      HOME: /tmp
+      MAX_REPO_MB: ${MAX_REPO_MB:-1024}
+      HTTPS_PROXY: http://gateway:3128
+      HTTP_PROXY: http://gateway:3128
+      NO_PROXY: ""
+      NODE_USE_ENV_PROXY: "1"
+    # Sin la carpeta de clones ni las claves: solo su propia carpeta temporal
+    volumes:
+      - scanner-tmp:/tmp
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    pids_limit: 256
+    cpus: 2
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get({ host: '127.0.0.1', port: 8090, path: '/health', agent: false }, (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+
 networks:
   interna:
     internal: true
@@ -72,3 +111,4 @@ networks:
 
 volumes:
   ominous-tmp:
+  scanner-tmp:
