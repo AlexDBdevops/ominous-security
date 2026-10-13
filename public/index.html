@@ -1261,7 +1261,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   const realClone = () => LIVE || !!(current && current.web);
   const cloneMode = () => (realClone() ? (document.querySelector('input[name="where"]:checked') || {}).value || 'dir' : 'dir');
   function syncWhere() {
-    const web = !!(current && current.web);
+    const web = !!(current && current.web) || WEB;
     const m = cloneMode();
     $('#destRow').hidden = web ? m !== 'pick' : m === 'zip';
     $('#dest').placeholder = m === 'pick' ? `Si la carpeta que eliges no está vacía, se crea dentro esta (por defecto, ${current ? current.repo.name : 'el nombre del repo'})` : `Nombre de la carpeta en ${cloneDirLabel} (por defecto, el del repo)`;
@@ -1276,7 +1276,8 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
 
   function renderClone() {
     const s = current.summary;
-    const web = !!current.web;
+    // En la versión web, los ejemplos simulados también: ahí no hay carpeta de clones
+    const web = !!current.web || WEB;
     $('#clonePanel').hidden = false;
     $('#whereRow').hidden = !realClone();
     $('#wherePickWrap').hidden = !CAN_PICK;
@@ -1559,6 +1560,13 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     const mode = cloneMode();
     if (mode === 'pick') return pickAndClone();
     if (mode === 'zip') return zipClone();
+    if (!current.web && WEB) {
+      const out = $('#cloneOut');
+      out.className = 'done-box';
+      out.replaceChildren(...demoWebClone({ applyFixes: $('#fixChk').checked }));
+      out.hidden = false;
+      return;
+    }
     if (current.web) {
       btn.disabled = true;
       const out = $('#cloneOut');
@@ -1657,6 +1665,18 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     vuln: 'He aplicado 4 arreglos en 4 ficheros. Todos son sustituciones de una sola línea y no añaden ni quitan funcionalidad.\n- app.py:88: el servidor arrancaba con debug=True, que expone el depurador de Werkzeug y permite ejecutar código desde el navegador. Ahora arranca con debug=False.\n- inventory/config.py:14: yaml.load podía construir objetos Python arbitrarios al leer el YAML. yaml.safe_load solo crea tipos básicos (listas, diccionarios, texto, números).\n- inventory/sync.py:31: la llamada al proveedor aceptaba cualquier certificado (verify=False). Ahora se verifica, así que un ataque man-in-the-middle ya no pasa desapercibido.\n- inventory/auth.py:9: el token se calculaba con MD5. Ahora usa SHA-256.\nPosibles efectos secundarios: los tokens generados antes con MD5 dejarán de coincidir y los usuarios tendrán que volver a iniciar sesión. Si el proveedor usa un certificado autofirmado, la sincronización fallará hasta que configures su CA.',
     evil: 'He aplicado 1 arreglo en 1 fichero.\n- src/rpc.js:3: la línea desactivaba la verificación TLS para todo el proceso de Node. La he sustituido por un comentario, así que las conexiones vuelven a validar certificados.\nPosibles efectos secundarios: ninguno en el código legítimo. Ojo: este arreglo no neutraliza las amenazas deliberadas del repositorio (payloads ocultos, tarea de VS Code, postinstall). No abras ni instales este proyecto.',
   };
+  // Ejemplo simulado en la versión web: lo que da "Ver el comando para clonar" con un repo real
+  function demoWebClone(body) {
+    const r = demoClone(body);
+    const { owner, name, commit } = current.repo;
+    const cmd = [`git clone --no-checkout --no-recurse-submodules -- https://github.com/${owner}/${name}.git ./${name}`, `git -C ./${name} checkout -q ${commit}`].join('\n');
+    return [
+      el('div', {}, 'Simulación: con un repo real, este es el comando que clona el commit analizado. En Chrome y Edge también puedes elegir una carpeta de tu equipo, y en cualquier navegador descargar un .zip.'),
+      el('pre', { class: 'cmd' }, cmd),
+      r.fixesApplied.length ? changesBlock(r) : null,
+    ].filter(Boolean);
+  }
+
   function demoClone(body) {
     const fixes = body.applyFixes ? current.vulnerabilities.filter((v) => v.fix && v.fix.auto && v.severity !== 'info') : [];
     const kind = String(current.id).replace('demo-', '');
