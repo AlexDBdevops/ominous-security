@@ -224,9 +224,12 @@ test('revisión: avisos de Semgrep demasiado generales o con orden fija', async 
   });
   t.after(() => fx.rm(dir));
   const sg = (file, line, name, severity = 'high') => ({ kind: 'vuln', rule: 'ext-semgrep', severity, title: `${name} [Semgrep]`, file, line, description: '' });
-  const out = { vulns: [sg('scripts/install.js', 1, 'spawn-shell-true'), sg('cli/open.js', 1, 'spawn-shell-true'), sg('src/run.js', 1, 'spawn-shell-true'), sg('src/run.js', 1, 'path-join-resolve-traversal', 'medium')], threats: [] };
+  const cq = (query, severity = 'high') => ({ kind: 'vuln', rule: 'ext-codeql', severity, title: `${query} [CodeQL]`, file: 'src/run.js', line: 1, description: '', explain: { name: `CodeQL · js/${query} (JavaScript/TypeScript)` } });
+  const out = { vulns: [sg('scripts/install.js', 1, 'spawn-shell-true'), sg('cli/open.js', 1, 'spawn-shell-true'), sg('src/run.js', 1, 'spawn-shell-true'), sg('src/run.js', 1, 'path-join-resolve-traversal', 'medium'), cq('missing-rate-limiting'), cq('path-injection')], threats: [] };
   await review(out, { root: dir });
-  const [fixed, win, open, noisy] = out.vulns;
+  const [fixed, win, open, noisy, rate, pathInj] = out.vulns;
+  assert.equal(rate.severity, 'low', 'falta de límite de peticiones: robustez del programa');
+  assert.equal(pathInj.severity, 'high', 'leer rutas que llegan de fuera sí puede tocar tus ficheros');
   assert.equal(fixed.severity, 'low', 'npm install con argumentos fijos');
   assert.equal(win.severity, 'medium', 'la shell solo en Windows, con una variable de argumento');
   assert.equal(open.severity, 'high', 'shell: true con orden variable sigue alto');

@@ -10,6 +10,9 @@ const path = require('path');
 const { analyzeTree, applyAutoFixes } = require('../lib/analyzer');
 const { explain } = require('../lib/explain');
 const { impactOf } = require('../lib/review');
+// En la página, la caché de OSV y deps.dev vive en la memoria de la pestaña: volver a analizar
+// el mismo repo (o uno con las mismas dependencias) no repite cientos de consultas.
+require('../lib/netcache').enable();
 const { parseGithubUrl, movedPass, scorecardCoverage, releasePass } = require('../lib/github');
 const ai = require('../lib/ai');
 const { fetchRepo, GhError } = require('./github');

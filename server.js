@@ -10,6 +10,20 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { Worker } = require('worker_threads');
+
+// Caché de OSV, EPSS y deps.dev en la carpeta temporal (en Docker, un volumen que sobrevive a
+// reinicios). Se fija antes de cargar los módulos: los hilos de análisis la heredan.
+//   OMINOUS_NET_CACHE=0  sin caché
+if (process.env.OMINOUS_NET_CACHE !== '0' && !process.env.OMINOUS_NET_CACHE_DIR) process.env.OMINOUS_NET_CACHE_DIR = path.join(os.tmpdir(), 'ominous-cache');
+// Restos de análisis cortados (el contenedor se paró a medias): clones temporales de repos ajenos
+// que no deben quedarse en disco.
+try {
+  for (const d of fs.readdirSync(os.tmpdir())) {
+    const p = path.join(os.tmpdir(), d);
+    if (/^ominous-(?!cache$)/.test(d) && Date.now() - fs.statSync(p).mtimeMs > 60 * 60e3) fs.rmSync(p, { recursive: true, force: true });
+  }
+} catch { /* sin carpeta temporal */ }
+try { require('./lib/netcache').prune(); } catch { /* sin caché */ }
 const { applyAutoFixes } = require('./lib/analyzer');
 const { summarizeDiff } = require('./lib/summary');
 const { scanHistory } = require('./lib/history');
