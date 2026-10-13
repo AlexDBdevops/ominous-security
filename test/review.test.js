@@ -201,7 +201,8 @@ test('revisión: a quién afecta cada aviso (protege a quien clona, no al autor)
   assert.equal(vs('js-exec', 'server/db.js').rule, undefined, 'db.exec de SQLite no es una shell');
   assert.equal(vs('js-exec', 'server/run.js').severity, 'high', 'exec de child_process con datos sí');
   assert.equal(vs('js-exec', 'server/run.js').impact, 'run');
-  assert.equal(vs('js-dangerous', 'client/Md.tsx').rule, undefined, 'mencionarlo en un comentario no es usarlo');
+  // Sin el analizador de JavaScript los comentarios de bloque no se saltan (podrían ser una plantilla)
+  if (require('../lib/comments').hasParser()) assert.equal(vs('js-dangerous', 'client/Md.tsx').rule, undefined, 'mencionarlo en un comentario no es usarlo');
   const caps = r.vulnerabilities.filter((x) => x.rule === 'compose-cap-add');
   assert.equal(caps.length, 1, 'cap_drop: - ALL es endurecer, no un fallo');
   assert.equal(caps[0].line, 9);
@@ -266,8 +267,14 @@ test('revisión: menciones en comentarios de documentación con comillas inverti
   });
   t.after(() => fx.rm(dir));
   const r = await analyzeTree(dir, {});
-  assert.equal(sev(r, 'persist', 'src/login.ts'), 'low', 'el fichero no ejecuta comandos ni se conecta a nada');
-  assert.equal(sev(r, 'persist', 'src/login-exec.ts'), 'high', 'si el fichero ejecuta comandos, la línea con comillas invertidas puede ser código');
+  if (require('../lib/comments').hasParser()) {
+    // Con el analizador de JavaScript se sabe que es un comentario: no sale en ningún caso
+    assert.equal(sev(r, 'persist', 'src/login.ts'), undefined);
+    assert.equal(sev(r, 'persist', 'src/login-exec.ts'), undefined);
+  } else {
+    assert.equal(sev(r, 'persist', 'src/login.ts'), 'low', 'el fichero no ejecuta comandos ni se conecta a nada');
+    assert.equal(sev(r, 'persist', 'src/login-exec.ts'), 'high', 'si el fichero ejecuta comandos, la línea con comillas invertidas puede ser código');
+  }
 });
 
 test('scripts remotos: la red local no se alcanza escribiendo la IP de otra forma', () => {
