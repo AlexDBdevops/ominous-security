@@ -379,7 +379,9 @@ const server = http.createServer(async (req, res) => {
   // Bloquea DNS rebinding y peticiones de otras webs (este servidor escribe en tu disco).
   if (!allowedHosts.has(String(req.headers.host)) && !process.env.ALLOW_ANY_HOST) return send(res, 403, { error: 'Host no permitido' });
   const origin = req.headers.origin;
-  if (req.method === 'POST' && origin && origin.replace(/^https?:\/\//, '') !== req.headers.host) return send(res, 403, { error: 'Origen no permitido' });
+  // Origen exacto, con su esquema: https solo detrás de un proxy con TLS (x-forwarded-proto).
+  const scheme = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+  if (req.method === 'POST' && origin && origin !== `${scheme}://${req.headers.host}`) return send(res, 403, { error: 'Origen no permitido' });
 
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (TOKEN && req.method === 'GET' && url.pathname === '/' && url.searchParams.has('token')) {
