@@ -72,6 +72,30 @@ function patch(findings) {
   return { applied, diff: out.join('') };
 }
 
+// Ficheros del repo analizado (con los arreglos, si se piden) para que la página los escriba en
+// la carpeta que elijas. En memoria quedan como estaban.
+function exportFiles(findings) {
+  if (!last) throw new Error('No hay ningún análisis en memoria.');
+  const root = last.root;
+  const p = findings.length ? patch(findings) : { applied: [], diff: '' };
+  // patch() deja los ficheros como estaban: se vuelven a aplicar para copiarlos y se restauran
+  const before = new Map();
+  for (const rel of new Set(findings.map((f) => f.file).filter(Boolean))) { try { before.set(rel, fs.readFileSync(path.join(root, rel))); } catch { /* no existe */ } }
+  if (findings.length) applyAutoFixes(root, findings);
+  const files = [];
+  const stack = [''];
+  while (stack.length) {
+    const rel = stack.pop();
+    for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) stack.push(r);
+      else if (e.isFile()) files.push({ path: r, data: new Uint8Array(fs.readFileSync(path.join(root, r))) });
+    }
+  }
+  for (const [rel, old] of before) fs.writeFileSync(path.join(root, rel), old);
+  return { files, applied: p.applied, diff: p.diff };
+}
+
 // Los arreglos sustituyen líneas sin añadir ni quitar ninguna: basta comparar línea a línea.
 function fileDiff(rel, oldText, newText) {
   if (/[\u0000-\u001f\u007f"\\]/.test(rel)) return ''; // git entrecomilla estas rutas: mejor no incluirlas
@@ -115,6 +139,7 @@ async function handle(msg, post) {
   try {
     if (msg.type === 'analyze') post({ result: await analyze(msg.url, (m) => post({ log: m }), msg.token || null, { deadline: Number(msg.deadline) || 0, inPage: msg.inPage === true, signal: msg.signal || null }) });
     else if (msg.type === 'patch') post({ result: patch(msg.findings || []) });
+    else if (msg.type === 'export') post({ result: exportFiles(msg.findings || []) });
     else post({ error: { message: 'Mensaje desconocido' } });
   } catch (e) {
     post({ error: errInfo(e) });

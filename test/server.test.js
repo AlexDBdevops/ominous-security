@@ -139,6 +139,12 @@ test('servidor HTTP', async (t) => {
     const r = await req('POST', '/api/analyze', { ...host, 'content-type': 'text/plain' }, 'url=x');
     assert.equal(r.status, 415);
   });
+  await t.test('clonar en una carpeta elegida: sin análisis o con un token inventado no hay nada', async () => {
+    assert.equal((await req('POST', '/api/export', { ...host, 'content-type': 'application/json' }, JSON.stringify({ id: 'nope' }))).status, 404);
+    assert.equal((await req('GET', '/api/export/00000000-0000-0000-0000-000000000000', host)).status, 404);
+    assert.equal((await req('GET', '/api/export/..%2f..%2fetc%2fpasswd', host)).status, 404);
+    assert.equal((await req('POST', '/api/export', { ...host, origin: 'https://evil.example', 'content-type': 'application/json' }, '{}')).status, 403);
+  });
   await t.test('clonar sin análisis previo falla', async () => {
     const r = await req('POST', '/api/clone', { ...host, 'content-type': 'application/json' }, JSON.stringify({ id: 'nope' }));
     assert.ok(r.status >= 400);

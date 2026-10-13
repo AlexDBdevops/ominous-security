@@ -24,6 +24,7 @@ const { parseGithubUrl, repoMetaFrom, parseScorecard } = require('./lib/github')
 const { git, gitPatched, checkGit } = require('./lib/gitsafe');
 const { scanRepo, ANALYSIS_TIMEOUT } = require('./lib/pipeline');
 const { remoteScan, checkScan } = require('./lib/scanclient');
+const { packTo, listTree } = require('./lib/tarpack');
 const WATCH = process.env.OMINOUS_WATCH !== '0';
 const WATCH_HOURS = Number(process.env.OMINOUS_WATCH_HOURS) || 24;
 
@@ -125,7 +126,8 @@ function assertInsideCloneDir(dir) {
   if (real !== base && !real.startsWith(base + path.sep)) throw Object.assign(new Error('El destino sale de la carpeta de clones (enlace simbólico).'), { status: 400 });
 }
 
-async function clone({ id, dest, acknowledged, applyFixes }) {
+// El análisis que se va a clonar; si no está en verde, hace falta la casilla de confirmación.
+function approvedAnalysis(id, acknowledged) {
   const a = analyses.get(id);
   if (!a) throw Object.assign(new Error('Análisis no encontrado o caducado. Vuelve a analizar el repositorio.'), { status: 404 });
   const aiRaised = !!(a.aiReview && a.aiReview.raises);
@@ -134,20 +136,14 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
       ? 'La revisión con IA ha encontrado problemas graves: marca la casilla de confirmación para clonar.'
       : 'El análisis no está en verde: marca la casilla de confirmación para clonar.'), { status: 409 });
   }
-  const target = resolveDest(dest, a.ref.repo);
-  // .ominous guarda la lista de vigilancia: un repo con ese nombre podría escribirla.
-  if (path.relative(path.resolve(CLONE_DIR), target).split(path.sep)[0] === '.ominous') throw Object.assign(new Error('Ese nombre de carpeta está reservado. Elige otro destino.'), { status: 400 });
-  if (fs.existsSync(target)) throw Object.assign(new Error(`La carpeta ya existe: ${target}`), { status: 409 });
-  // Se comprueba antes de crear nada: si no, un enlace dentro de otro clon crearía carpetas fuera.
-  fs.mkdirSync(CLONE_DIR, { recursive: true });
-  let existing = path.dirname(target);
-  while (!fs.existsSync(existing)) existing = path.dirname(existing);
-  assertInsideCloneDir(existing);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  assertInsideCloneDir(path.dirname(target));
-  // Solo la rama analizada y sin tocar el disco hasta fijar el commit analizado: así no llega
-  // a escribirse ni un fichero de otra rama o de un commit posterior al análisis.
-  const args = ['clone', '--no-recurse-submodules', '--single-branch', '--no-checkout', '--config', 'core.protectNTFS=true', '--config', 'core.protectHFS=true'];
+  return a;
+}
+
+// Clona en `target` el commit analizado (solo esa rama y sin escribir nada en disco hasta fijar
+// el commit: no llega ni un fichero de otra rama o de un commit posterior) y aplica los
+// arreglos si se piden. `config` añade opciones de git al clon.
+async function checkoutAnalyzed(a, target, applyFixes, config = []) {
+  const args = ['clone', '--no-recurse-submodules', '--single-branch', '--no-checkout', '--config', 'core.protectNTFS=true', '--config', 'core.protectHFS=true', ...config.flatMap((c) => ['--config', c])];
   if (a.ref.branch) args.push('--branch', a.ref.branch);
   args.push('--', a.ref.cloneUrl, target);
   await git(args, { timeout: 600000 });
@@ -163,6 +159,23 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
     diff = await git(['-C', target, 'diff', '--no-color', '--no-ext-diff', '-U3']);
     summary = await summarizeDiff({ diff, fixes, repo: `${a.ref.owner}/${a.ref.repo}` });
   }
+  return { commit: a.commit, pinnedToAnalyzedCommit: pinned, fixesApplied: fixes, diff: diff.slice(0, 400000), diffTruncated: diff.length > 400000, summary };
+}
+
+async function clone({ id, dest, acknowledged, applyFixes }) {
+  const a = approvedAnalysis(id, acknowledged);
+  const target = resolveDest(dest, a.ref.repo);
+  // .ominous guarda la lista de vigilancia: un repo con ese nombre podría escribirla.
+  if (path.relative(path.resolve(CLONE_DIR), target).split(path.sep)[0] === '.ominous') throw Object.assign(new Error('Ese nombre de carpeta está reservado. Elige otro destino.'), { status: 400 });
+  if (fs.existsSync(target)) throw Object.assign(new Error(`La carpeta ya existe: ${target}`), { status: 409 });
+  // Se comprueba antes de crear nada: si no, un enlace dentro de otro clon crearía carpetas fuera.
+  fs.mkdirSync(CLONE_DIR, { recursive: true });
+  let existing = path.dirname(target);
+  while (!fs.existsSync(existing)) existing = path.dirname(existing);
+  assertInsideCloneDir(existing);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  assertInsideCloneDir(path.dirname(target));
+  const r = await checkoutAnalyzed(a, target, applyFixes);
   a.clonedTo = target;
   if (WATCH) {
     try {
@@ -170,7 +183,51 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
       watch.add({ owner: a.ref.owner, repo: a.ref.repo, commit: a.commit, dest: fs.realpathSync.native(target), findings: deps });
     } catch (e) { console.error(`✗ vigilancia: ${e.message}`); }
   }
-  return { path: target, commit: a.commit, pinnedToAnalyzedCommit: pinned, fixesApplied: fixes, diff: diff.slice(0, 400000), diffTruncated: diff.length > 400000, summary };
+  return { path: target, ...r };
+}
+
+// ---------- Clonar en una carpeta que eliges en el navegador ----------
+// La app no escribe fuera de CLONE_DIR. Para clonar en cualquier carpeta de tu equipo, la app
+// prepara el clon en su carpeta temporal (commit analizado y arreglos aplicados) y la página lo
+// escribe en la carpeta que elijas, con el permiso que te pide el navegador. El clon lleva
+// core.symlinks=false y core.filemode=false: el navegador no crea enlaces ni permisos de
+// ejecución, y así git no los ve como cambios (es como clona git en un Windows sin enlaces).
+const exportsReady = new Map(); // token → { tmp, root, list, at }
+const EXPORT_TTL = 15 * 60e3;
+function dropExport(token) {
+  const e = exportsReady.get(token);
+  if (!e) return;
+  exportsReady.delete(token);
+  fs.rmSync(e.tmp, { recursive: true, force: true });
+}
+
+async function prepareExport({ id, acknowledged, applyFixes }) {
+  const a = approvedAnalysis(id, acknowledged);
+  if (exportsReady.size >= 4) throw Object.assign(new Error('Hay demasiados clones preparados sin descargar. Espera unos minutos.'), { status: 429 });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ominous-export-'));
+  try {
+    const root = path.join(tmp, 'repo');
+    const r = await checkoutAnalyzed(a, root, applyFixes, ['core.symlinks=false', 'core.filemode=false']);
+    const list = listTree(root);
+    const bytes = list.reduce((s, e) => s + (e.size || 0), 0);
+    if (bytes > MAX_REPO_MB * 2 * 1024 * 1024) throw Object.assign(new Error(`El clon ocupa ${Math.round(bytes / 1048576)} MB: demasiado para pasarlo por el navegador. Usa la carpeta de clones.`), { status: 413 });
+    const token = crypto.randomUUID();
+    exportsReady.set(token, { tmp, root, list, at: Date.now() });
+    setTimeout(() => dropExport(token), EXPORT_TTL).unref();
+    return { token, name: a.ref.repo, files: list.filter((e) => !e.dir).length, bytes, ...r };
+  } catch (e) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    throw e;
+  }
+}
+
+// Manda el clon preparado como tar y lo borra. El token es de un solo uso.
+async function sendExport(token, res) {
+  const e = exportsReady.get(token);
+  if (!e) return send(res, 404, { error: 'Clon preparado no encontrado o caducado. Vuelve a pulsar Clonar.' });
+  exportsReady.delete(token);
+  res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/x-tar', 'x-ominous-bytes': String(e.list.reduce((s, x) => s + (x.size || 0), 0)) });
+  try { await packTo(e.root, res, e.list); res.end(); } catch { res.destroy(); } finally { fs.rmSync(e.tmp, { recursive: true, force: true }); }
 }
 
 // Segunda opinión de Claude sobre los ficheros de más riesgo. Solo añade avisos.
@@ -288,6 +345,15 @@ const server = http.createServer(async (req, res) => {
       running++;
       try { return send(res, 200, await analyze(body.url)); } finally { running--; }
     }
+    // Clonar en una carpeta elegida en el navegador: se prepara (POST) y se descarga una vez (GET)
+    if (req.method === 'POST' && url.pathname === '/api/export') {
+      if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
+      const body = await readJson(req);
+      if (rateLimited(clientIp(req))) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
+      return send(res, 200, await prepareExport(body));
+    }
+    const em = req.method === 'GET' && url.pathname.match(/^\/api\/export\/([0-9a-f-]{36})$/);
+    if (em) return sendExport(em[1], res);
     if (req.method === 'POST' && url.pathname === '/api/clone') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
       const body = await readJson(req);

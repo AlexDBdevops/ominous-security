@@ -184,6 +184,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
 .watch-list .walert.unread { font-weight: 600; }
 .watch-list .forget { background: none; border: 0; color: var(--muted); font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; }
 .clone-inner { display: grid; gap: 10px; }
+.clone .where { display: grid; gap: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .clone .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .clone label.chk { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; cursor: pointer; }
 .clone label.chk input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
@@ -415,6 +416,10 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       <section class="panel clone" id="clonePanel" hidden aria-labelledby="cloneH">
         <h2 id="cloneH">Clonar</h2>
         <div class="clone-inner">
+          <div class="where" id="whereRow" role="radiogroup" aria-label="Dónde clonar" hidden>
+            <label class="chk"><input type="radio" name="where" value="pick" id="wherePick" checked><span>En una carpeta de tu equipo que elijas</span></label>
+            <label class="chk"><input type="radio" name="where" value="dir" id="whereDir"><span id="whereDirText">En la carpeta de clones de la app (con vigilancia diaria de sus dependencias)</span></label>
+          </div>
           <div class="row" id="destRow">
             <input id="dest" type="text" placeholder="Nombre de la carpeta en ~/ominous-clones (por defecto, el del repo)" aria-label="Carpeta destino">
           </div>
@@ -1212,19 +1217,35 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   });
 
   // ---------- Clonado ----------
+  // Clonar en una carpeta que eliges: el navegador escribe en ella (File System Access API, en
+  // Chrome y Edge). No dentro de un marco ajeno, como la vista previa de claude.ai, donde no se permite.
+  const CAN_PICK = typeof window.showDirectoryPicker === 'function' && window.self === window.top;
+  const picking = () => CAN_PICK && (LIVE || (current && current.web)) && $('#wherePick').checked;
+  function syncWhere() {
+    const web = !!(current && current.web);
+    const pick = picking();
+    $('#destRow').hidden = web && !pick;
+    $('#dest').placeholder = pick ? `Nombre de la carpeta nueva (por defecto, ${current ? current.repo.name : 'el del repo'})` : 'Nombre de la carpeta en ~/ominous-clones (por defecto, el del repo)';
+    if (!current) return;
+    const n = current.summary.autoFixable;
+    const fixes = `${n} arreglo${n > 1 ? 's' : ''} automático${n > 1 ? 's' : ''}`;
+    $('#fixChkText').textContent = web && !pick ? `Descargar también un parche con ${fixes}` : `Aplicar ${fixes} al clonar`;
+    $('#cloneBtn').textContent = pick ? `Elegir carpeta y clonar ${current.repo.name}` : web ? 'Ver el comando para clonar' : `Clonar ${current.repo.name}`;
+  }
+  document.querySelectorAll('input[name="where"]').forEach((r) => r.addEventListener('change', syncWhere));
+
   function renderClone() {
     const s = current.summary;
     const web = !!current.web;
     $('#clonePanel').hidden = false;
+    $('#whereRow').hidden = !(CAN_PICK && (LIVE || web));
+    $('#whereDirText').textContent = web ? 'Ver el comando para clonarlo con git (y el parche, si lo pides)' : 'En la carpeta de clones de la app (con vigilancia diaria de sus dependencias)';
     $('#destRow').hidden = web;
     $('#cloneH').textContent = web ? 'Clonar en tu equipo' : 'Clonar';
     $('#cloneOut').hidden = true;
     $('#ackChk').checked = false;
     $('#fixChk').checked = false;
     $('#fixChkWrap').hidden = !s.autoFixable;
-    $('#fixChkText').textContent = web
-      ? `Descargar también un parche con ${s.autoFixable} arreglo${s.autoFixable > 1 ? 's' : ''} automático${s.autoFixable > 1 ? 's' : ''}`
-      : `Aplicar ${s.autoFixable} arreglo${s.autoFixable > 1 ? 's' : ''} automático${s.autoFixable > 1 ? 's' : ''} al clonar`;
     const aiRaised = !!(current.aiReview && current.aiReview.raises);
     const risky = s.overall !== 'green' || aiRaised;
     $('#riskWrap').hidden = !risky;
@@ -1235,7 +1256,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       : 'Estado amarillo: hay vulnerabilidades o avisos que revisar.';
     $('#ackText').textContent = s.overall === 'red' ? 'Entiendo que este repositorio puede ser malicioso y quiero clonarlo igualmente (no se ejecutará nada).' : 'He revisado los avisos y quiero clonar igualmente.';
     $('#cloneBtn').className = `btn clone-btn ${s.overall === 'red' ? 'risky' : ''}`;
-    $('#cloneBtn').textContent = web ? 'Ver el comando para clonar' : `Clonar ${current.repo.name}`;
+    syncWhere();
     syncCloneBtn();
   }
   function syncCloneBtn() {
@@ -1284,8 +1305,156 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     return parts;
   }
 
+  // ---------- Escribir el clon en la carpeta elegida ----------
+  // Cada parte de la ruta tiene que ser un nombre normal: nada de "..", barras ni caracteres de
+  // control (el navegador también lo exige, pero aquí se comprueba antes). Los nombres que tu
+  // sistema no admite (CON o "a:b" en Windows) se saltan y se dicen al final.
+  const SEGMENT = /^(?!\.{1,2}$)[^/\\\u0000-\u001f]{1,255}$/;
+  async function writeFile(rootDir, rel, onChunk) {
+    const parts = rel.split('/').filter(Boolean);
+    if (!parts.length || !parts.every((p) => SEGMENT.test(p))) throw new Error(`ruta no válida: ${rel}`);
+    let dir = rootDir;
+    for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
+    const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+    const w = await fh.createWritable();
+    try { await onChunk(w); await w.close(); } catch (e) { await w.abort().catch(() => {}); throw e; }
+  }
+
+  // Lee un tar (el que prepara la app) a medida que llega y escribe cada fichero.
+  async function untarInto(body, rootDir, onProgress) {
+    const reader = body.getReader();
+    let buf = new Uint8Array(0);
+    let done = false;
+    const need = async (n) => {
+      while (buf.length < n && !done) {
+        const r = await reader.read();
+        if (r.done) { done = true; break; }
+        const b = new Uint8Array(buf.length + r.value.length); b.set(buf); b.set(r.value, buf.length); buf = b;
+      }
+      return buf.length >= n;
+    };
+    const take = (n) => { const out = buf.subarray(0, n); buf = buf.subarray(n); return out; };
+    const text = (b) => new TextDecoder().decode(b).replace(/\0.*$/s, '');
+    const failed = [];
+    let paxPath = null;
+    let written = 0;
+    let files = 0;
+    for (;;) {
+      if (!await need(512)) break;
+      const h = take(512);
+      if (h.every((x) => x === 0)) break;
+      const size = parseInt(text(h.subarray(124, 136)).trim() || '0', 8);
+      const type = String.fromCharCode(h[156] || 48);
+      const name = paxPath || text(h.subarray(0, 100));
+      paxPath = null;
+      const pad = (512 - (size % 512)) % 512;
+      if (type === 'x') {
+        if (!await need(size + pad)) throw new Error('El clon llegó cortado.');
+        const m = new TextDecoder().decode(take(size)).match(/\d+ path=([^\n]*)\n/);
+        paxPath = m ? m[1] : null;
+        take(pad);
+        continue;
+      }
+      if (type === '5') { continue; } // las carpetas se crean al escribir sus ficheros
+      if (type !== '0') { if (!await need(size + pad)) break; take(size + pad); continue; }
+      let left = size;
+      const pump = async (w) => {
+        while (left > 0) {
+          if (!await need(1)) throw new Error('El clon llegó cortado.');
+          const part = take(Math.min(left, buf.length));
+          if (w) await w.write(part);
+          left -= part.length; written += part.length;
+          onProgress(written, files);
+        }
+      };
+      try { await writeFile(rootDir, name, pump); files++; } catch (e) { failed.push(name); await pump(null); }
+      if (!await need(pad)) break;
+      take(pad);
+    }
+    return { files, failed };
+  }
+
+  async function pickAndClone() {
+    const btn = $('#cloneBtn');
+    const out = $('#cloneOut');
+    const label = btn.textContent;
+    const name = ($('#dest').value || current.repo.name).trim();
+    if (!SEGMENT.test(name)) { out.className = 'err'; out.textContent = 'El nombre de la carpeta no es válido: sin barras ni "..".'; out.hidden = false; return; }
+    let parent;
+    try {
+      // Lo primero, para que el navegador lo asocie al clic
+      parent = await window.showDirectoryPicker({ id: 'ominous-clone', mode: 'readwrite' });
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      out.className = 'err'; out.textContent = `El navegador no ha dejado elegir carpeta (${e.message}).`; out.hidden = false; return;
+    }
+    btn.disabled = true;
+    out.hidden = true;
+    try {
+      // Una carpeta nueva dentro de la elegida, como git clone; si ya existe con algo dentro, no se toca
+      let exists = null;
+      try { exists = await parent.getDirectoryHandle(name); } catch { /* no existe */ }
+      if (exists) { for await (const _ of exists.keys()) throw new Error(`Ya hay una carpeta "${name}" con contenido en ${parent.name}. Elige otro nombre.`); } // eslint-disable-line no-unused-vars
+      const fixes = $('#fixChk').checked;
+      let r;
+      let res;
+      if (current.web) {
+        btn.textContent = 'Preparando los ficheros…';
+        const auto = fixes ? current.vulnerabilities.filter((v) => v.fix && v.fix.auto && v.severity !== 'info') : [];
+        r = await engine.send({ type: 'export', findings: auto });
+      } else {
+        btn.textContent = fixes ? 'Clonando y aplicando arreglos…' : 'Clonando…';
+        const prep = await fetch('/api/export', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: current.id, acknowledged: $('#ackChk').checked, applyFixes: fixes }) });
+        r = await prep.json();
+        if (!prep.ok) throw new Error(r.error || 'No se pudo preparar el clon');
+        res = await fetch(`/api/export/${r.token}`);
+        if (!res.ok || !res.body) throw new Error('No se pudo descargar el clon preparado.');
+      }
+      const dir = await parent.getDirectoryHandle(name, { create: true });
+      const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
+      let w;
+      if (current.web) {
+        const failed = [];
+        let i = 0;
+        for (const f of r.files) {
+          try { await writeFile(dir, f.path, (wr) => wr.write(f.data)); } catch { failed.push(f.path); }
+          if (++i % 50 === 0) btn.textContent = `Escribiendo… ${i} de ${r.files.length} ficheros`;
+        }
+        w = { files: r.files.length - failed.length, failed };
+      } else {
+        const total = Number(res.headers.get('x-ominous-bytes')) || r.bytes || 0;
+        w = await untarInto(res.body, dir, (bytes, n) => { btn.textContent = `Escribiendo… ${mb(bytes)}${total ? ` de ${mb(total)}` : ''} (${n} ficheros)`; });
+      }
+      const where = `${parent.name}/${name}`;
+      const c = String(current.repo.commit);
+      const parts = [el('div', {}, current.web ? 'Copiado en ' : 'Clonado en ', el('code', {}, where), ` (commit ${c.slice(0, 10)}, ${w.files} ficheros).`)];
+      if (current.web) {
+        // Sin servidor no hay .git: estos comandos lo convierten en un clon de ese commit
+        const cmd = [`cd ${name}`, 'git init -q', `git remote add origin ${current.repo.url}.git`, `git fetch -q --depth 1 origin ${c}`, 'git reset -q FETCH_HEAD'].join('\n');
+        parts.push(el('div', {}, 'Son los ficheros del commit analizado, sin historial de git. Para tenerlo como repositorio de git (con los arreglos como cambios sin confirmar):'), el('pre', { class: 'cmd' }, cmd));
+      } else {
+        parts.push(el('p', { class: 'ai-note' }, 'Es un clon de git completo de esa rama. Los enlaces simbólicos quedan como ficheros de texto y no se guardan permisos de ejecución (el navegador no puede crearlos); el clon está configurado para que git no los vea como cambios. Para que este clon tenga la vigilancia diaria, clónalo en la carpeta de clones de la app.'));
+      }
+      if (r.pinnedToAnalyzedCommit) parts.push(el('div', {}, 'El repositorio cambió después del análisis: lo he dejado en el commit analizado.'));
+      if (w.failed.length) parts.push(el('div', { class: 'warnline' }, `${w.failed.length} fichero${w.failed.length > 1 ? 's' : ''} con nombres que tu sistema no admite no se han escrito: ${w.failed.slice(0, 5).join(', ')}${w.failed.length > 5 ? '…' : ''}`));
+      if ((r.fixesApplied || r.applied || []).length) parts.push(changesBlock({ ...r, fixesApplied: r.fixesApplied || r.applied, picked: true, web: !!current.web }));
+      if (current.summary.overall === 'red') parts.push(el('p', { class: 'ai-note' }, 'No abras la carpeta en un editor que confíe en ella ni instales sus dependencias: las amenazas siguen ahí.'));
+      out.className = 'done-box';
+      out.replaceChildren(...parts);
+      out.hidden = false;
+      btn.textContent = 'Clonado';
+    } catch (e) {
+      out.className = 'err';
+      out.textContent = `${e.message}${e.name === 'NotAllowedError' ? ' (el navegador no ha dado permiso para escribir en esa carpeta)' : ''}`;
+      out.hidden = false;
+      btn.textContent = label;
+      syncCloneBtn();
+    }
+  }
+
   $('#cloneBtn').addEventListener('click', async () => {
     const btn = $('#cloneBtn');
+    if (picking()) return pickAndClone();
     if (current.web) {
       btn.disabled = true;
       const out = $('#cloneOut');
@@ -1368,7 +1537,8 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         undo.textContent = `${e.message}. Reintentar`;
       }
     });
-    box.append(undo);
+    // En una carpeta elegida en el navegador la app no puede tocar nada: se deshace con git
+    box.append(r.picked ? el('p', { class: 'ai-note' }, r.web ? 'Para deshacerlos, vuelve a copiar sin marcar los arreglos.' : 'Para deshacerlos: git checkout -- . dentro de la carpeta.') : undo);
     return box;
   }
 
