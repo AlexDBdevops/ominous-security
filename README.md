@@ -104,11 +104,12 @@ El contenedor (`compose.yaml`) corre con tu usuario, con el sistema de ficheros 
 
 **Red aislada.** La app vive en una red interna de Docker sin salida a ninguna parte. Su única conexión con el exterior es un segundo contenedor mínimo, la pasarela (`lib/gateway.js`, sin dependencias): reenvía lo que abres en el navegador y hace de proxy de salida para la app, git, Semgrep y Trivy. Solo deja pasar HTTPS (puerto 443) hacia direcciones públicas, comprobando la IP al conectar: ni tu equipo, ni tu red local, ni el servicio de metadatos de la nube son alcanzables, aunque un dominio resuelva a ellos. Cada intento bloqueado queda en `docker compose logs gateway`. La pasarela corre como `nobody`, en solo lectura, sin capacidades y con 128 MB.
 
-**Análisis en su propio contenedor.** El repo ajeno se clona y se analiza en un tercer contenedor, `scanner` (`lib/scanner.js`): git, el historial, los submódulos, Gitleaks, Semgrep, Trivy, CodeQL y el analizador. Corre con otro usuario (1001), sin tu carpeta de clones y sin `GITHUB_TOKEN` ni `ANTHROPIC_API_KEY`, y solo sale a Internet por la pasarela. Si un repo explotara un fallo de git o de alguna herramienta, se quedaría ahí:
+**Análisis en su propio contenedor.** El repo ajeno se clona y se analiza en un tercer contenedor, `scanner` (`lib/scanner.js`): git, el historial, los submódulos, Gitleaks, Semgrep, Trivy, CodeQL y el analizador. Corre con otro usuario (1001), sin tu carpeta de clones y sin `GITHUB_TOKEN` ni `ANTHROPIC_API_KEY`, y solo sale a Internet por su propia pasarela de salida (`salida-scanner`, la misma `lib/gateway.js` sin entrada). Si un repo explotara un fallo de git o de alguna herramienta, se quedaría ahí:
 
 - La URL que clona la construye él desde `owner/repo` (siempre `https://github.com/<owner>/<repo>.git`); no acepta URLs.
 - La app comprueba todo lo que le devuelve antes de usarlo (`lib/scanclient.js`): el commit tiene que ser un SHA de 40 caracteres, la rama no puede parecer una opción de git ni salirse de las rutas normales, y cada aviso se copia campo a campo con tamaños acotados. Lo único que podría hacer un scanner comprometido es mentir en los avisos.
 - No puede hablar con la app: la app solo acepta conexiones de la pasarela, que anuncia la IP real de quien se conecta con PROXY protocol (`lib/proxyproto.js`), o locales (el healthcheck). Así, además, el límite de peticiones por IP vuelve a ser por IP y no común para todos.
+- Tampoco puede llegar a la pasarela de entrada: no comparte red con ella (redes `entrada`, `escaneo` y `escaneo-salida` en `compose.yaml`), y si la cabecera PROXY dijera que la conexión viene del scanner, la app la cerraría igualmente. Si pudiera, entraría como si fuera tu navegador y podría pedir a la app que clonara en tu carpeta o usar tus claves.
 
 En la app quedan la página, las consultas a GitHub con tu token, la revisión con IA y el clon final en tu carpeta, que solo se hace cuando lo confirmas. Sin Docker (`node server.js`), todo corre en el mismo proceso, como antes.
 
@@ -424,7 +425,7 @@ lib/scanner.js       contenedor de análisis aislado (Docker): ejecuta lib/pipel
 lib/scanclient.js    la app pide el análisis al scanner y comprueba todo lo que devuelve
 lib/proxyproto.js    entrada a la app solo desde la pasarela, con la IP real (PROXY protocol)
 lib/gitsafe.js       git endurecido, versión de git y limpieza de restos temporales
-lib/gateway.js       pasarela de red: entrada a la app y proxy de salida solo HTTPS a direcciones públicas
+lib/gateway.js       pasarela de red: entrada a la app y proxy de salida solo HTTPS a direcciones públicas (sin entrada, la del scanner)
 lib/remote.js        descarga como datos los scripts remotos que el repo manda ejecutar
 lib/review.js        revisión de falsos positivos y a quién afecta cada aviso
 lib/comments.js      qué líneas son comentario según el lenguaje (JS y TS con @babel/parser)

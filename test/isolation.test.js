@@ -71,3 +71,33 @@ test('aislamiento: la app solo acepta la pasarela (con la IP real) o conexiones 
   assert.match(await raw('GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'), /200 OK/);
   assert.equal(seen.pop(), '127.0.0.1');
 });
+
+test('aislamiento: una cabecera PROXY que dice venir del scanner se rechaza', () => {
+  const { clientFromLine } = require('../lib/proxyproto');
+  const scanner = new Set(['172.20.0.5']);
+  assert.equal(clientFromLine('PROXY TCP4 172.18.0.1 172.18.0.3 51000 8080', '172.18.0.3', scanner), '172.18.0.1', 'tu navegador, por el puerto publicado');
+  assert.equal(clientFromLine('PROXY TCP4 172.20.0.5 172.20.0.2 51000 8080', '172.18.0.3', scanner), null, 'el scanner');
+  assert.equal(clientFromLine('PROXY TCP6 ::ffff:172.20.0.5 ::1 51000 8080', '172.18.0.3', scanner), null, 'el scanner escrito como IPv6');
+  assert.equal(clientFromLine('PROXY UNKNOWN', '172.18.0.3', scanner), '172.18.0.3');
+  assert.equal(clientFromLine('PROXY TCP4 nada 1.2.3.4 1 2', '172.18.0.3', scanner), null, 'IP no válida');
+  assert.equal(clientFromLine('GET / HTTP/1.1', '172.18.0.3', scanner), null, 'sin cabecera');
+});
+
+test('aislamiento: el scanner no comparte red con la pasarela de entrada', () => {
+  // Lectura mínima de compose.yaml: las redes de cada servicio
+  const yaml = require('fs').readFileSync(require('path').join(__dirname, '..', 'compose.yaml'), 'utf8');
+  const nets = {};
+  let svc = null;
+  for (const line of yaml.split('\n')) {
+    const s = line.match(/^ {2}([a-z-]+):\s*$/);
+    if (s) svc = s[1];
+    const n = line.match(/^ {4}networks:\s*\[([^\]]*)\]/);
+    if (svc && n) nets[svc] = n[1].split(',').map((x) => x.trim());
+  }
+  assert.ok(nets.gateway && nets.scanner && nets.app && nets['salida-scanner'], JSON.stringify(nets));
+  assert.deepEqual(nets.scanner.filter((x) => nets.gateway.includes(x)), [], 'scanner y pasarela de entrada sin red común');
+  assert.ok(nets.scanner.some((x) => nets.app.includes(x)), 'la app llega al scanner');
+  assert.ok(nets.scanner.some((x) => nets['salida-scanner'].includes(x)), 'el scanner tiene salida');
+  assert.match(yaml, /salida-scanner:[\s\S]*?GATEWAY_PORT: "0"/, 'la salida del scanner no tiene entrada');
+  assert.match(yaml, /OMINOUS_PROXY_DENY: scanner/);
+});

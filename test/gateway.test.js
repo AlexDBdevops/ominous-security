@@ -41,3 +41,17 @@ test('pasarela: entrada a la app y salida solo HTTPS a direcciones públicas', a
   assert.equal(plain, 405, 'HTTP sin cifrar no se reenvía');
   assert.match(out, /bloqueado: 127\.0\.0\.1:443/);
 });
+
+test('pasarela: sin entrada (GATEWAY_PORT=0) solo hay proxy de salida', async (t) => {
+  const outPort = await freePort();
+  const gw = spawn(process.execPath, [path.join(__dirname, '..', 'lib', 'gateway.js')], {
+    env: { ...process.env, GATEWAY_PORT: '0', EGRESS_PORT: String(outPort) }, stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  let out = '';
+  gw.stdout.on('data', (d) => { out += d; });
+  t.after(() => gw.kill());
+  for (let i = 0; i < 50 && !/salida :/.test(out); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.match(out, /sin entrada/);
+  assert.doesNotMatch(out, /entrada :/);
+  assert.equal(await connect(outPort, '127.0.0.1:443'), 403, 'la salida sigue filtrando');
+});

@@ -47,6 +47,8 @@ const SCANNER_URL = process.env.OMINOUS_SCANNER_URL || '';
 // Detrás de la pasarela (Docker): la IP real llega por PROXY protocol y solo se aceptan
 // conexiones de la pasarela o locales (lib/proxyproto.js).
 const PROXY_FROM = process.env.OMINOUS_PROXY_FROM || '';
+// El contenedor de análisis: si su IP llegara en una cabecera PROXY, se rechaza
+const PROXY_DENY = process.env.OMINOUS_PROXY_DENY || '';
 const clientIp = (req) => req.socket.clientAddress || req.socket.remoteAddress;
 const analyses = new Map(); // id -> { repo, commit, result, at }
 const watch = new Watch(CLONE_DIR);
@@ -450,7 +452,7 @@ if (require.main === module) {
     process.exit(1);
   }
   fs.mkdirSync(CLONE_DIR, { recursive: true });
-  (PROXY_FROM ? require('./lib/proxyproto').proxyServer(server, PROXY_FROM) : server).listen(PORT, HOST, () => {
+  (PROXY_FROM ? require('./lib/proxyproto').proxyServer(server, PROXY_FROM, PROXY_DENY) : server).listen(PORT, HOST, () => {
     console.log(`\n  Ominous Security escuchando en http://localhost:${PORT}`);
     console.log(`  Los clones se guardan en ${CLONE_DIR}\n`);
   });
