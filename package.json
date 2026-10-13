@@ -14,7 +14,8 @@
     "scan:self": "node bin/ominous-scan.js . --exclude lib/rules.js,lib/decoder.js,lib/extra.js,lib/surfaces.js,lib/remote.js,lib/review.js,public/index.html,public/analyzer.js,README.md,test/,node_modules/ --fail-on red",
     "build:site": "node scripts/build-site.js dist",
     "build:web": "node scripts/build-web.js",
-    "update:data": "node scripts/update-data.js"
+    "update:data": "node scripts/update-data.js",
+    "gold": "node test/gold/score.js"
   },
   "engines": {
     "node": ">=18"
