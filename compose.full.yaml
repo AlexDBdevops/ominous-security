@@ -10,5 +10,11 @@ services:
       context: .
       dockerfile: Dockerfile.full
     image: ominous-security:full
+  # Las herramientas corren en el scanner: es el que necesita la imagen completa y la memoria
+  scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile.full
+    image: ominous-security:full
     mem_limit: 4g
     pids_limit: 512
