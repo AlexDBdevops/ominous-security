@@ -569,6 +569,15 @@
       "min": "low",
       "max": "medium",
       "why": "Instalador en el README."
+    },
+    {
+      "repo": "anthropics/anthropic-sdk-python",
+      "kind": "threat",
+      "rule": "homoglyph",
+      "file": "^tests/test_utils/",
+      "label": "ruido",
+      "max": "low",
+      "why": "μ de microsegundos en un comentario al final de la línea."
     }
   ]
 }
