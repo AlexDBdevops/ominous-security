@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { analyzeTree, applyAutoFixes } = require('../lib/analyzer');
 const { explain } = require('../lib/explain');
+const { impactOf } = require('../lib/review');
 const { parseGithubUrl, movedPass, scorecardCoverage, releasePass } = require('../lib/github');
 const ai = require('../lib/ai');
 const { fetchRepo, GhError } = require('./github');
@@ -121,7 +122,7 @@ const isWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof Wor
 if (isWorker) {
   self.onmessage = (ev) => handle(ev.data || {}, (m) => self.postMessage(m));
 } else if (typeof window !== 'undefined') {
-  window.Ominous = Object.freeze({ explain, parseGithubUrl, handle });
+  window.Ominous = Object.freeze({ explain, impactOf, parseGithubUrl, handle });
 }
 
 module.exports = { analyze, patch, fileDiff, handle };

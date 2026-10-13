@@ -1446,6 +1446,8 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     if (m && !Object.values(DEMO_URLS).includes(url)) { base.repo.owner = m[1]; base.repo.name = m[2].replace(/\.git$/, ''); base.repo.meta.description = `(${base.repo.meta.description}) Resultado simulado de la demo.`; }
     base.id = 'demo-' + kind;
     base.ai = { available: true, ...DEMO_AI[kind].sent };
+    // La misma clasificación que un análisis de verdad (lib/review.js): cuándo te afectaría cada aviso
+    if (window.Ominous && window.Ominous.impactOf) for (const f of [...base.vulnerabilities, ...base.threats]) f.impact = f.impact || window.Ominous.impactOf(f);
     return base;
   }
 
@@ -1485,7 +1487,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
           osv: [{ id: 'GHSA-462w-v97r-4m45', aliases: ['CVE-2019-10906'], summary: 'Jinja2 sandbox escape via string formatting', details: 'In Pallets Jinja before 2.10.1, str.format_map allows a sandbox escape.', severity: 'high', fixed: '2.10.1', published: '2019-04-10', url: 'https://osv.dev/vulnerability/GHSA-462w-v97r-4m45', refs: ['https://nvd.nist.gov/vuln/detail/CVE-2019-10906'] },
             { id: 'GHSA-g3rq-g295-4j3m', aliases: ['CVE-2020-28493'], summary: 'Regular Expression Denial of Service in Jinja2', details: 'The ReDoS vulnerability is mainly due to the _punctuation_re regex operator and its use of multiple wildcards. The last wildcard is the most exploitable as it searches for trailing punctuation. This issue can be mitigated by Markdown to format user content instead of the urlize filter.', severity: 'medium', fixed: '2.11.3', published: '2021-03-19', url: 'https://osv.dev/vulnerability/GHSA-g3rq-g295-4j3m', refs: ['https://nvd.nist.gov/vuln/detail/CVE-2020-28493'] }] },
         { kind: 'vuln', rule: 'py-weakhash', severity: 'medium', title: 'Hash débil (MD5/SHA-1)', description: 'No apto para seguridad.', file: 'inventory/auth.py', line: 9, snippet: 'token = hashlib.md5(user.email.encode()).hexdigest()', fixable: true, fix: { text: 'Cambiar a hashlib.sha256 (revisa compatibilidad con hashes guardados).', auto: true } },
-        { kind: 'vuln', rule: 'gha-prt', severity: 'medium', title: 'Workflow con pull_request_target', description: 'Corre con secretos sobre código de forks. Peligroso si hace checkout del PR.', file: '.github/workflows/preview.yml', line: 3, snippet: 'pull_request_target:', fixable: false, notFixableReason: 'Depende del flujo de CI del proyecto; necesita revisión manual.' },
+        { kind: 'vuln', rule: 'gha-prt', severity: 'info', title: 'Workflow con pull_request_target', description: 'No te afecta al clonarlo: se ejecuta en el CI del autor (GitHub Actions), no en tu máquina. Corre con secretos sobre código de forks; peligroso para el autor si hace checkout del PR.', file: '.github/workflows/preview.yml', line: 3, snippet: 'pull_request_target:', fixable: false, notFixableReason: 'Depende del flujo de CI del proyecto; necesita revisión manual.' },
       ],
       threats: [],
     },
