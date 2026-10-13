@@ -131,6 +131,9 @@ test('servidor HTTP', async (t) => {
   await t.test('bloquea peticiones desde otras webs (Origin)', async () => {
     const r = await req('POST', '/api/analyze', { ...host, origin: 'https://evil.example', 'content-type': 'application/json' }, '{}');
     assert.equal(r.status, 403);
+    // Mismo host con otro esquema u Origin "null" (iframe con sandbox): tampoco
+    assert.equal((await req('POST', '/api/watch/forget', { ...host, origin: `https://${host.host}`, 'content-type': 'application/json' }, '{"id":"x"}')).status, 403);
+    assert.equal((await req('POST', '/api/watch/forget', { ...host, origin: 'null', 'content-type': 'application/json' }, '{"id":"x"}')).status, 403);
   });
   await t.test('exige JSON', async () => {
     const r = await req('POST', '/api/analyze', { ...host, 'content-type': 'text/plain' }, 'url=x');
