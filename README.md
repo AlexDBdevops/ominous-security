@@ -209,7 +209,7 @@ En las ediciones web, `public/analyzer.js` (el mismo analizador de `lib/`, empaq
 3. Pasa las mismas reglas que el servidor (los tests comprueban que los hallazgos son idénticos) y consulta OSV.dev, OpenSSF Scorecard, deps.dev, EPSS y los registros de npm y PyPI (ver [Más allá del repo](#más-allá-del-repo)).
 4. El análisis tiene 5 minutos. Hacia los 3 minutos y 45 segundos deja de leer ficheros y de hacer consultas y devuelve lo revisado, marcado como incompleto; si a los 5 minutos sigue atascado (un fichero diseñado para colgar analizadores), la página corta el worker. Si el navegador no deja usar un worker, el análisis corre en la propia página con el plazo completo y lee como mucho 1,5 MB de cada fichero.
 
-Para clonar, la página da el comando que deja el clon en el commit analizado y, si se pide, descarga un parche con los arreglos automáticos para aplicarlo con `git apply`.
+Para clonar, en Chrome y Edge puedes elegir una carpeta de tu equipo: la página escribe en ella los ficheros del commit analizado, con los arreglos automáticos si los marcas, y te da los comandos para convertirla en un repositorio de git de ese commit. En los demás navegadores da el comando que deja el clon en el commit analizado y, si se pide, descarga un parche con los arreglos para aplicarlo con `git apply`.
 
 Cada hallazgo lleva una ficha **¿Qué es esto?** sin IA: el tipo de fallo (con su CWE), por qué importa, qué comprobar y, en las dependencias, los avisos publicados en OSV.dev (identificadores CVE/GHSA, resumen, versión corregida y enlaces).
 
@@ -275,7 +275,12 @@ Seguridad de la ventana:
 
 **Cobertura.** Cada análisis muestra qué se ha revisado por completo, qué parcialmente y qué no.
 
-**Clonar.** El botón está al final. Si el resultado no está en verde exige marcar la casilla de confirmación, y el servidor también lo comprueba. El clon se fija al commit exacto que se analizó. Si aplicas arreglos verás el diff y un resumen de cada cambio, por qué es más seguro y qué podría romper, y podrás deshacerlos con un botón. El resumen lo escribe Claude si está conectado; en ese caso, y solo en ese, el diff se envía a Claude.
+**Clonar.** El botón está al final. Si el resultado no está en verde exige marcar la casilla de confirmación, y el servidor también lo comprueba. El clon se fija al commit exacto que se analizó.
+
+- **En una carpeta que elijas** (Chrome y Edge): el navegador te pide elegir una carpeta y crea dentro una con el nombre del repo. La app prepara el clon en su carpeta temporal (commit analizado y arreglos aplicados), lo manda una sola vez a la página y lo borra; la página lo escribe en tu carpeta con el permiso que te pide el navegador. Es un clon de git completo de esa rama, con `core.symlinks=false` y `core.filemode=false`: el navegador no puede crear enlaces simbólicos ni permisos de ejecución, así que los enlaces quedan como ficheros de texto y git no lo ve como cambios. La app nunca escribe fuera de su carpeta de clones.
+- **En la carpeta de clones de la app** (`~/ominous-clones`, o en navegadores sin selector de carpetas): como antes, y con vigilancia diaria de sus dependencias.
+
+ Si aplicas arreglos verás el diff y un resumen de cada cambio, por qué es más seguro y qué podría romper, y podrás deshacerlos con un botón. El resumen lo escribe Claude si está conectado; en ese caso, y solo en ese, el diff se envía a Claude.
 
 ### Más allá del repo
 
@@ -424,6 +429,7 @@ lib/remote.js        descarga como datos los scripts remotos que el repo manda e
 lib/review.js        revisión de falsos positivos y a quién afecta cada aviso
 lib/comments.js      qué líneas son comentario según el lenguaje (JS y TS con @babel/parser)
 lib/netcache.js      caché de OSV, EPSS y deps.dev
+lib/tarpack.js       empaqueta el clon preparado para escribirlo en la carpeta que elijas
 bin/ominous-scan.js  escáner por línea de comandos (JSON, SARIF, Code Quality)
 lib/analyzer.js      recorrido del repo, chequeos estructurales, veredicto, arreglos automáticos
 lib/rules.js         reglas de vulnerabilidades y amenazas
