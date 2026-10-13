@@ -10,6 +10,7 @@ const path = require('path');
 const { analyzeTree, applyAutoFixes } = require('../lib/analyzer');
 const { explain } = require('../lib/explain');
 const { impactOf } = require('../lib/review');
+const { zipChunks } = require('../lib/zippack');
 // En la página, la caché de OSV y deps.dev vive en la memoria de la pestaña: volver a analizar
 // el mismo repo (o uno con las mismas dependencias) no repite cientos de consultas.
 require('../lib/netcache').enable();
@@ -140,6 +141,16 @@ async function handle(msg, post) {
     if (msg.type === 'analyze') post({ result: await analyze(msg.url, (m) => post({ log: m }), msg.token || null, { deadline: Number(msg.deadline) || 0, inPage: msg.inPage === true, signal: msg.signal || null }) });
     else if (msg.type === 'patch') post({ result: patch(msg.findings || []) });
     else if (msg.type === 'export') post({ result: exportFiles(msg.findings || []) });
+    else if (msg.type === 'zip') {
+      // El mismo contenido, en un zip para descargarlo (navegadores sin selector de carpetas)
+      const x = exportFiles(msg.findings || []);
+      const name = String(msg.name || 'repo');
+      const parts = [...zipChunks(x.files.map((f) => ({ name: `${name}/${f.path}`, data: f.data })))];
+      const zip = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
+      let o = 0;
+      for (const p of parts) { zip.set(p, o); o += p.length; }
+      post({ result: { zip, files: x.files.length, applied: x.applied, diff: x.diff } });
+    }
     else post({ error: { message: 'Mensaje desconocido' } });
   } catch (e) {
     post({ error: errInfo(e) });

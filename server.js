@@ -25,12 +25,23 @@ const { git, gitPatched, checkGit } = require('./lib/gitsafe');
 const { scanRepo, ANALYSIS_TIMEOUT } = require('./lib/pipeline');
 const { remoteScan, checkScan } = require('./lib/scanclient');
 const { packTo, listTree } = require('./lib/tarpack');
+const { zipChunks } = require('./lib/zippack');
 const WATCH = process.env.OMINOUS_WATCH !== '0';
 const WATCH_HOURS = Number(process.env.OMINOUS_WATCH_HOURS) || 24;
 
 const PORT = Number(process.env.PORT) || 8080;
 const HOST = process.env.HOST || '127.0.0.1';
 const CLONE_DIR = process.env.CLONE_DIR || path.join(os.homedir(), 'ominous-clones');
+// Con Docker, CLONE_DIR es /data dentro del contenedor; CLONE_DIR_HOST es esa carpeta vista desde
+// tu equipo (la pone compose): es la que se enseña, para que sepas dónde está el clon.
+const CLONE_DIR_HOST = process.env.CLONE_DIR_HOST || '';
+function shownPath(p) {
+  if (!CLONE_DIR_HOST || !p) return p;
+  const rel = path.relative(CLONE_DIR, p);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return p;
+  const sep = /^[A-Za-z]:[\\/]|\\/.test(CLONE_DIR_HOST) ? '\\' : '/';
+  return rel ? `${CLONE_DIR_HOST.replace(/[\\/]+$/, '')}${sep}${rel.split(path.sep).join(sep)}` : CLONE_DIR_HOST;
+}
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const SCANNER_URL = process.env.OMINOUS_SCANNER_URL || '';
 // Detrás de la pasarela (Docker): la IP real llega por PROXY protocol y solo se aceptan
@@ -79,18 +90,21 @@ async function repoMeta(owner, repo) {
   return repoMetaFrom(r, u, sc, rel || []);
 }
 
-async function analyze(url) {
+// onLog recibe cada paso real del análisis (la página lo enseña como progreso).
+async function analyze(url, onLog = () => {}) {
   const ref = parseGithubUrl(url);
   if (!ref) throw Object.assign(new Error('URL no válida. Usa algo como https://github.com/usuario/repositorio'), { status: 400 });
   const until = Date.now() + ANALYSIS_TIMEOUT;
+  const log = (m) => { console.log(`  [${ref.owner}/${ref.repo}] ${m}`); onLog(m); };
+  log('Evaluando la reputación del autor y del repo (GitHub y OpenSSF Scorecard)…');
   const meta = await repoMeta(ref.owner, ref.repo);
   if (meta && meta.size_kb > MAX_REPO_MB * 1024) {
     throw Object.assign(new Error(`El repositorio ocupa ${Math.round(meta.size_kb / 1024)} MB y el límite es ${MAX_REPO_MB} MB (MAX_REPO_MB).`), { status: 413 });
   }
-  const log = (m) => console.log(`  [${ref.owner}/${ref.repo}] ${m}`);
   // Con OMINOUS_SCANNER_URL (Docker), el repo se clona y se analiza en otro contenedor, sin tu
   // carpeta de clones ni tus claves; lo que devuelve se comprueba antes de usarlo.
-  const scan = checkScan(SCANNER_URL ? await remoteScan(SCANNER_URL, { ref, meta, until }) : await scanRepo({ ref, meta, until, log }), ref);
+  const scan = checkScan(SCANNER_URL ? await remoteScan(SCANNER_URL, { ref, meta, until, onLog: log }) : await scanRepo({ ref, meta, until, log }), ref);
+  log('Preparando el informe…');
   const { aiContext, ...result } = scan.result;
   const id = crypto.randomUUID();
   const payload = {
@@ -167,7 +181,7 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
   const target = resolveDest(dest, a.ref.repo);
   // .ominous guarda la lista de vigilancia: un repo con ese nombre podría escribirla.
   if (path.relative(path.resolve(CLONE_DIR), target).split(path.sep)[0] === '.ominous') throw Object.assign(new Error('Ese nombre de carpeta está reservado. Elige otro destino.'), { status: 400 });
-  if (fs.existsSync(target)) throw Object.assign(new Error(`La carpeta ya existe: ${target}`), { status: 409 });
+  if (fs.existsSync(target)) throw Object.assign(new Error(`La carpeta ya existe: ${shownPath(target)}`), { status: 409 });
   // Se comprueba antes de crear nada: si no, un enlace dentro de otro clon crearía carpetas fuera.
   fs.mkdirSync(CLONE_DIR, { recursive: true });
   let existing = path.dirname(target);
@@ -183,7 +197,7 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
       watch.add({ owner: a.ref.owner, repo: a.ref.repo, commit: a.commit, dest: fs.realpathSync.native(target), findings: deps });
     } catch (e) { console.error(`✗ vigilancia: ${e.message}`); }
   }
-  return { path: target, ...r };
+  return { path: shownPath(target), ...r };
 }
 
 // ---------- Clonar en una carpeta que eliges en el navegador ----------
@@ -212,7 +226,7 @@ async function prepareExport({ id, acknowledged, applyFixes }) {
     const bytes = list.reduce((s, e) => s + (e.size || 0), 0);
     if (bytes > MAX_REPO_MB * 2 * 1024 * 1024) throw Object.assign(new Error(`El clon ocupa ${Math.round(bytes / 1048576)} MB: demasiado para pasarlo por el navegador. Usa la carpeta de clones.`), { status: 413 });
     const token = crypto.randomUUID();
-    exportsReady.set(token, { tmp, root, list, at: Date.now() });
+    exportsReady.set(token, { tmp, root, list, name: a.ref.repo, at: Date.now() });
     setTimeout(() => dropExport(token), EXPORT_TTL).unref();
     return { token, name: a.ref.repo, files: list.filter((e) => !e.dir).length, bytes, ...r };
   } catch (e) {
@@ -221,13 +235,26 @@ async function prepareExport({ id, acknowledged, applyFixes }) {
   }
 }
 
-// Manda el clon preparado como tar y lo borra. El token es de un solo uso.
-async function sendExport(token, res) {
+// Manda el clon preparado y lo borra. El token es de un solo uso.
+//  tar: para que la página lo escriba en la carpeta que elijas
+//  zip: para descargarlo y descomprimirlo donde quieras (cualquier navegador)
+async function sendExport(token, res, format) {
   const e = exportsReady.get(token);
   if (!e) return send(res, 404, { error: 'Clon preparado no encontrado o caducado. Vuelve a pulsar Clonar.' });
   exportsReady.delete(token);
-  res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/x-tar', 'x-ominous-bytes': String(e.list.reduce((s, x) => s + (x.size || 0), 0)) });
-  try { await packTo(e.root, res, e.list); res.end(); } catch { res.destroy(); } finally { fs.rmSync(e.tmp, { recursive: true, force: true }); }
+  try {
+    if (format === 'zip') {
+      const name = /^[\w.-]{1,100}$/.test(e.name) && !/^\.+$/.test(e.name) ? e.name : 'repo';
+      res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/zip', 'content-disposition': `attachment; filename="${name}.zip"` });
+      const files = (function* files() { for (const x of e.list) if (!x.dir) yield { name: `${name}/${x.rel}`, data: fs.readFileSync(path.join(e.root, x.rel)) }; })();
+      for (const chunk of zipChunks(files)) if (!res.write(chunk)) await new Promise((r) => res.once('drain', r));
+      res.end();
+    } else {
+      res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/x-tar', 'x-ominous-bytes': String(e.list.reduce((s, x) => s + (x.size || 0), 0)) });
+      await packTo(e.root, res, e.list);
+      res.end();
+    }
+  } catch { res.destroy(); } finally { fs.rmSync(e.tmp, { recursive: true, force: true }); }
 }
 
 // Segunda opinión de Claude sobre los ficheros de más riesgo. Solo añade avisos.
@@ -315,7 +342,7 @@ const server = http.createServer(async (req, res) => {
   }
   // La comprobación de salud no exige token (la usan Docker y los scripts), pero sin él no da detalles.
   if (req.method === 'GET' && url.pathname === '/api/health') {
-    return send(res, 200, { ok: true, mode: 'live', ...(tokenOk(req) ? { cloneDir: EXPOSED ? path.basename(CLONE_DIR) : CLONE_DIR, ai: ai.available(), aiConnection: conn.status() } : {}) });
+    return send(res, 200, { ok: true, mode: 'live', ...(tokenOk(req) ? { cloneDir: EXPOSED ? path.basename(CLONE_DIR_HOST || CLONE_DIR) : shownPath(CLONE_DIR), ai: ai.available(), aiConnection: conn.status() } : {}) });
   }
   if (!tokenOk(req)) {
     if (req.method === 'GET' && url.pathname === '/') return send(res, 401, '<!doctype html><meta charset="utf-8"><title>Ominous Security</title><p>Acceso protegido. Abre la URL con <code>?token=TU_TOKEN</code>.</p>', 'text/html; charset=utf-8');
@@ -343,6 +370,16 @@ const server = http.createServer(async (req, res) => {
       if (running >= MAX_CONCURRENT) return send(res, 503, { error: 'Ya hay análisis en curso. Inténtalo en un momento.' });
       console.log(`→ Analizando ${String(body.url).slice(0, 200)}`);
       running++;
+      // La página pide el progreso real: líneas JSON { log } y al final { result } o { error, status }
+      if (/application\/x-ndjson/.test(req.headers.accept || '')) {
+        res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/x-ndjson; charset=utf-8' });
+        const line = (o) => { if (!res.destroyed) res.write(`${JSON.stringify(o)}\n`); };
+        try { line({ result: await analyze(body.url, (m) => line({ log: String(m).slice(0, 300) })) }); } catch (e) {
+          console.error(`✗ ${e.message}`);
+          line({ error: e.status ? e.message : 'Error interno', status: e.status || 500 });
+        } finally { running--; res.end(); }
+        return;
+      }
       try { return send(res, 200, await analyze(body.url)); } finally { running--; }
     }
     // Clonar en una carpeta elegida en el navegador: se prepara (POST) y se descarga una vez (GET)
@@ -353,7 +390,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await prepareExport(body));
     }
     const em = req.method === 'GET' && url.pathname.match(/^\/api\/export\/([0-9a-f-]{36})$/);
-    if (em) return sendExport(em[1], res);
+    if (em) return sendExport(em[1], res, url.searchParams.get('formato'));
     if (req.method === 'POST' && url.pathname === '/api/clone') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
       const body = await readJson(req);
@@ -380,7 +417,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, r);
     }
     // Expuesta a la red: no se enseñan rutas completas del disco (como cloneDir en /api/health).
-    const watchView = (w) => (EXPOSED ? { ...w, repos: w.repos.map((r) => ({ ...r, dest: path.relative(CLONE_DIR, r.dest) })) } : w);
+    const watchView = (w) => ({ ...w, repos: w.repos.map((r) => ({ ...r, dest: EXPOSED ? path.relative(CLONE_DIR, r.dest) : shownPath(r.dest) })) });
     if (req.method === 'GET' && url.pathname === '/api/watch') return send(res, 200, { enabled: WATCH, hours: WATCH_HOURS, ...watchView(watch.list()) });
     if (req.method === 'POST' && /^\/api\/watch\/(check|forget|read)$/.test(url.pathname)) {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });

@@ -28,6 +28,8 @@ services:
     environment:
       HOME: /tmp
       CLONE_DIR: /data
+      # La misma carpeta vista desde tu equipo: es la que enseña la página
+      CLONE_DIR_HOST: "${OMINOUS_CLONES:-./clones}"
       ALLOWED_HOSTS: "localhost:${OMINOUS_PORT:-8080},127.0.0.1:${OMINOUS_PORT:-8080}"
       GITHUB_TOKEN:          # se toma de tu entorno o de .env si existe
       ANTHROPIC_API_KEY:
