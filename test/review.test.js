@@ -58,6 +58,7 @@ test('scripts remotos: nunca se descargan de la red local ni sin https', async (
   assert.match((await inspectRemote('https://[::1]/x.sh')).error, /red local/);
   assert.match((await inspectRemote('http://example.com/x.sh')).error, /https/);
   assert.match((await inspectRemote('https://user:pw@example.com/x.sh')).error, /credenciales/);
+  assert.match((await inspectRemote('https://example.com:9200/x.sh')).error, /puerto 443/);
 });
 
 test('scripts remotos: qué hace el script', () => {
