@@ -90,7 +90,9 @@ const EXPOSED = !!process.env.ALLOW_ANY_HOST || [...allowedHosts].some((h) => !L
 
 // Git endurecido: sin hooks, sin submódulos, sin LFS, sin prompts, sin protocolo file://
 const GIT_SAFE = ['-c', `core.hooksPath=${NO_HOOKS}`, '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never', '-c', 'submodule.recurse=false', '-c', 'core.fsmonitor=false'];
-const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', GIT_ASKPASS: 'echo' };
+// git solo recibe lo que necesita: ni GITHUB_TOKEN ni ANTHROPIC_API_KEY llegan a sus procesos.
+const GIT_ENV_KEEP = /^(PATH|HOME|LANG|LC_\w+|TZ|TMPDIR|TEMP|TMP|SYSTEMROOT|SystemRoot|WINDIR|COMSPEC|PATHEXT|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|PROGRAMDATA|ProgramData|https?_proxy|HTTPS?_PROXY|no_proxy|NO_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|GIT_SSL_CAINFO)$/;
+const GIT_ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => GIT_ENV_KEEP.test(k))), GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', GIT_ASKPASS: 'echo' };
 
 function git(args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -157,7 +159,8 @@ async function analyze(url) {
     const branch = ref.branch || await git(['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD']);
     const meta = await metaP;
     const log = (m) => console.log(`  [${ref.owner}/${ref.repo}] ${m}`);
-    const extra = { vulns: [], threats: [], coverage: [], ref: { owner: ref.owner, repo: ref.repo, commit } };
+    // remote: descarga (sin ejecutar) los scripts que el repo manda ejecutar con curl | sh y similares
+    const extra = { vulns: [], threats: [], coverage: [], ref: { owner: ref.owner, repo: ref.repo, commit }, remote: true };
     movedPass(ref, meta, extra);
     scorecardCoverage(meta, extra);
     const timed = async (label, fn) => {
