@@ -5,6 +5,11 @@
 #   OMINOUS_PORT    puerto en tu máquina (por defecto 8080)
 #   OMINOUS_CLONES  carpeta de tu máquina donde quedan los clones (por defecto ./clones)
 #   OMINOUS_UID/GID usuario con el que corre el contenedor (el tuyo, para que los clones sean tuyos)
+#
+# Red: la app vive en una red interna sin salida a ninguna parte. La única conexión con el
+# exterior es la pasarela (lib/gateway.js): reenvía lo que abres en el navegador y hace de
+# proxy de salida que solo deja pasar HTTPS hacia direcciones públicas. Ni tu equipo, ni tu
+# red local, ni el servicio de metadatos de la nube son alcanzables desde la app.
 
 name: ominous-security
 
@@ -14,9 +19,7 @@ services:
     image: ominous-security:local
     restart: unless-stopped
     user: "${OMINOUS_UID:-1000}:${OMINOUS_GID:-1000}"
-    ports:
-      # Solo en 127.0.0.1: nadie de tu red puede usarla para escribir en tu disco.
-      - "127.0.0.1:${OMINOUS_PORT:-8080}:8080"
+    networks: [interna]
     environment:
       HOME: /tmp
       CLONE_DIR: /data
@@ -24,6 +27,11 @@ services:
       GITHUB_TOKEN:          # se toma de tu entorno o de .env si existe
       ANTHROPIC_API_KEY:
       MAX_REPO_MB: ${MAX_REPO_MB:-1024}
+      # Todo el tráfico de salida (app, git, Semgrep, Trivy) pasa por la pasarela
+      HTTPS_PROXY: http://gateway:3128
+      HTTP_PROXY: http://gateway:3128
+      NO_PROXY: ""
+      NODE_USE_ENV_PROXY: "1"
     volumes:
       - "${OMINOUS_CLONES:-./clones}:/data"
       - ominous-tmp:/tmp
@@ -35,6 +43,32 @@ services:
     mem_limit: 2g
     pids_limit: 256
     cpus: 2
+
+  gateway:
+    build: .
+    image: ominous-security:local
+    restart: unless-stopped
+    command: ["node", "lib/gateway.js"]
+    user: "65534:65534"
+    networks: [interna, salida]
+    ports:
+      # Solo en 127.0.0.1: nadie de tu red puede usarla para escribir en tu disco.
+      - "127.0.0.1:${OMINOUS_PORT:-8080}:8080"
+    environment:
+      GATEWAY_APP: app:8080
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    pids_limit: 32
+    cpus: 0.5
+    # El healthcheck de la imagen pregunta a la app a través de la propia pasarela
+    depends_on: [app]
+
+networks:
+  interna:
+    internal: true
+  salida: {}
 
 volumes:
   ominous-tmp:
