@@ -30,7 +30,7 @@ scripts/local.sh            # Windows: .\scripts\local.ps1
 
 El script construye la imagen, la arranca, espera a que responda y abre http://localhost:8080. Los clones quedan en `~/ominous-clones`. Necesitas Docker con el plugin `docker compose` (Docker Desktop ya lo trae).
 
-**Sin Docker** (Node.js 18 o superior y git):
+**Sin Docker** (Node.js 22 o superior y git):
 
 ```bash
 npm ci --omit=dev           # opcional: solo añade el SDK de Anthropic para los resúmenes por IA
@@ -124,7 +124,7 @@ docker run -d --name ominous -p 127.0.0.1:8080:8080 \
 
 ### En tu equipo sin Docker
 
-`scripts/local.sh node` comprueba que tienes Node.js 18+ y git, instala el SDK opcional y arranca el servidor en `127.0.0.1`.
+`scripts/local.sh node` comprueba que tienes Node.js 22+ y git, instala el SDK opcional y arranca el servidor en `127.0.0.1`.
 
 ### Desde el móvil, en tu red local
 
@@ -363,7 +363,7 @@ En GitHub Actions:
 
 ```bash
 npm run lint        # sintaxis, 'use strict', JSON y caracteres invisibles o bidi
-npm test            # tests con node --test (Node 20+)
+npm test            # tests con node --test (Node 22+)
 npm run scan:self   # la herramienta se analiza a sí misma
 npm run build:web   # vuelve a generar public/analyzer.js tras cambiar lib/ o web/
 ```
@@ -376,7 +376,7 @@ Los tests generan sus repos trampa en una carpeta temporal en cada ejecución (`
 |---|---|
 | `lint` | `npm run lint` |
 | `bundle` | `public/analyzer.js` al día con `lib/` y `web/` |
-| `test` | tests en Node 20, 22 y 24; en 22 con cobertura (resumen del job) y JUnit |
+| `test` | tests en Node 22 y 24; en 22 con cobertura (resumen del job) y JUnit |
 | `self-scan` | la herramienta se analiza a sí misma; en repos públicos los hallazgos salen en *Security > Code scanning* |
 | `audit` | `npm audit` |
 | `docker` | imagen con prueba de humo y escaneo Trivy; desde `main` y etiquetas se publica en `ghcr.io/alexdbdevops/ominous-security` |
@@ -384,7 +384,7 @@ Los tests generan sus repos trampa en una carpeta temporal en cada ejecución (`
 | `pages` | versión web en GitHub Pages (solo en `main`) |
 | `release` | release de GitHub al subir una etiqueta `vX.Y.Z` que coincida con `package.json` |
 
-`codeql.yml` pasa CodeQL cada semana y en cada PR, `update-data.yml` refresca cada semana los [datos que envejecen](#datos-que-se-actualizan-solos) con un PR, y Dependabot vigila npm, las acciones y la imagen base.
+`codeql.yml` pasa CodeQL cada semana y en cada PR, `update-data.yml` refresca cada semana los [datos que envejecen](#datos-que-se-actualizan-solos) con un PR, y Dependabot vigila npm, las acciones y la imagen base: un PR agrupado por ecosistema y solo versiones con al menos 7 días publicadas (14 si son mayores).
 
 Para publicar una versión, sube la versión en `package.json`, haz commit y ejecuta `git tag v1.0.1 && git push --tags`.
 

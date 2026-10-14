@@ -67,8 +67,8 @@ case "${1:-up}" in
     docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges --network none \
       -e OMINOUS_OFFLINE=1 -v "$dir:/src:ro" --entrypoint ominous-scan ominous-security:local /src "$@" ;;
   node)
-    command -v node >/dev/null || die "No encuentro Node.js 18 o superior (https://nodejs.org)."
-    [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 18 ] || die "Necesitas Node.js 18 o superior."
+    command -v node >/dev/null || die "No encuentro Node.js 22 o superior (https://nodejs.org)."
+    [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 22 ] || die "Necesitas Node.js 22 o superior."
     command -v git >/dev/null || die "No encuentro git."
     [ -d node_modules ] || npm ci --omit=dev --ignore-scripts || echo "  (sin SDK de Anthropic: el resumen del diff será local)"
     PORT="$OMINOUS_PORT" CLONE_DIR="$OMINOUS_CLONES" exec node server.js ;;

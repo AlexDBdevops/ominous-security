@@ -1,14 +1,33 @@
 version: 2
+# Agrupado: un PR por ecosistema (sin agrupar, Dependabot abre como mucho 5 y deja fuera el
+# resto, y partía codeql-action en un PR por pieza). cooldown: no propone una versión hasta
+# que lleva unos días publicada; si alguien sube una versión maliciosa de una dependencia,
+# suele retirarse en ese plazo. Las versiones mayores van aparte y esperan más.
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      npm:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      acciones:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 14

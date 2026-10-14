@@ -34,7 +34,8 @@ switch ($Command) {
   'down'    { docker compose down }
   'logs'    { docker compose logs -f app }
   'node'    {
-    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'No encuentro Node.js 18 o superior (https://nodejs.org).' }
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'No encuentro Node.js 22 o superior (https://nodejs.org).' }
+    if ([int](node -p "process.versions.node.split('.')[0]") -lt 22) { throw 'Necesitas Node.js 22 o superior.' }
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'No encuentro git.' }
     if (-not (Test-Path node_modules)) { npm ci --omit=dev --ignore-scripts }
     $env:PORT = $env:OMINOUS_PORT; $env:CLONE_DIR = $env:OMINOUS_CLONES
