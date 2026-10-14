@@ -1,20 +1,20 @@
-# Conjunto etiquetado
+# Labeled set
 
-Mide cada cambio en las reglas o en `lib/review.js` con dos preguntas: ¿queda ruido? y ¿se sigue
-detectando lo malicioso?
+Measures every change to the rules or to `lib/review.js` with two questions: is there noise left?
+And is the malicious stuff still detected?
 
-- `test/helpers/malware.js`: repos maliciosos de prueba (técnicas reales e intentos de colarse
-  por las rebajas de gravedad). No hay malware de verdad: todo apunta a `evil.example` y nada se
-  ejecuta. `npm test` los comprueba con el analizador de JavaScript y sin él.
-- `labels.json`: avisos de repos reales revisados a mano. `real` tiene que salir al menos con
-  `min` (y como mucho `max`, si lo lleva); `ruido` no puede pasar de `max`. `rule` y `file` son
-  expresiones regulares; `why` explica la decisión.
-- `score.js`: puntúa una tanda (`npm run gold -- <carpeta con los JSON>`) y lista al final las
-  amenazas medias o más que aún no tienen etiqueta.
+- `test/helpers/malware.js`: malicious test repos (real techniques and attempts to slip through
+  the severity downgrades). There is no real malware: everything points at `evil.example` and
+  nothing runs. `npm test` checks them with and without the JavaScript parser.
+- `labels.json`: findings from real repos reviewed by hand. A `real` label must come out at least
+  at `min` (and at most `max`, if set); a `ruido` (noise) label cannot go above `max`. `rule` and
+  `file` are regular expressions; `why` explains the decision.
+- `score.js`: scores a batch (`npm run gold -- <folder with the JSON files>`) and lists at the end
+  the medium-or-higher threats that have no label yet.
 
-## Cuando aparece un falso positivo
+## When a false positive shows up
 
-1. Etiquetarlo en `labels.json` con el porqué.
-2. Si el arreglo rebaja algo, añadir en `test/helpers/malware.js` la muestra que intentaría
-   colarse por esa rebaja (tiene que seguir saliendo alta).
-3. `npm test`, y después una tanda con `npm run gold`.
+1. Label it in `labels.json` with the reason.
+2. If the fix lowers something, add to `test/helpers/malware.js` the sample that would try to slip
+   through that downgrade (it must still come out high).
+3. `npm test`, then a batch with `npm run gold`.
