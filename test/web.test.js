@@ -104,27 +104,6 @@ test('web: mismo análisis que el de Node sobre el mismo commit', async (t) => {
   assert.ok(r.logs.length > 2);
 });
 
-test('web: parche de los arreglos automáticos sin tocar el análisis en memoria', async (t) => {
-  const dir = fx.trapRepo();
-  t.after(() => fx.rm(dir));
-  const om = loadBundle(fakeGithub(dir));
-  const a = (await call(om, { type: 'analyze', url: 'github.com/acme/tool' })).result;
-  const auto = a.vulnerabilities.filter((v) => v.fix && v.fix.auto && v.severity !== 'info');
-  assert.ok(auto.length, 'el repo trampa tiene arreglos automáticos');
-  const p1 = (await call(om, { type: 'patch', findings: auto })).result;
-  const p2 = (await call(om, { type: 'patch', findings: auto })).result;
-  assert.ok(p1.applied.length);
-  assert.match(p1.diff, /^diff --git a\/\S+ b\/\S+\n--- a\/\S+\n\+\+\+ b\/\S+\n@@ -\d+,\d+ \+\d+,\d+ @@/);
-  assert.equal(p1.diff, p2.diff, 'los ficheros vuelven a su estado original');
-  // git apply lo acepta tal cual sobre el commit original
-  const { execFileSync } = require('child_process');
-  try { execFileSync('git', ['--version'], { stdio: 'pipe' }); } catch { return; }
-  const pf = path.join(dir, '..', `${path.basename(dir)}.patch`);
-  fs.writeFileSync(pf, p1.diff);
-  t.after(() => fs.rmSync(pf, { force: true }));
-  execFileSync('git', ['apply', '--check', pf], { cwd: dir, stdio: 'pipe' });
-});
-
 test('web: 404 explica si falta la cuenta o el repo', async (t) => {
   const dir = fx.cleanRepo();
   t.after(() => fx.rm(dir));
@@ -172,19 +151,6 @@ test('web: el paquete está al día con lib/ y web/', () => {
   try { require.resolve('esbuild'); } catch { esbuild = false; }
   if (!esbuild) return;
   execFileSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'build-web.js'), '--check'], { stdio: 'pipe' });
-});
-
-test('web: el parche respeta ficheros sin salto de línea final', (t) => {
-  const { execFileSync } = require('child_process');
-  try { execFileSync('git', ['--version'], { stdio: 'pipe' }); } catch { return; }
-  const { fileDiff } = require('../web/entry');
-  const dir = fx.tmpDir('eol');
-  t.after(() => fx.rm(dir));
-  const before = 'uno\ndos\ntres\ncuatro';
-  fs.writeFileSync(path.join(dir, 'f.txt'), before);
-  fs.writeFileSync(path.join(dir, 'p.diff'), fileDiff('f.txt', before, 'uno\ndos\ntres\nCUATRO'));
-  execFileSync('git', ['apply', 'p.diff'], { cwd: dir, stdio: 'pipe' });
-  assert.equal(fs.readFileSync(path.join(dir, 'f.txt'), 'utf8'), 'uno\ndos\ntres\nCUATRO');
 });
 
 test('web: el token de GitHub solo va a api.github.com y se valida', async (t) => {

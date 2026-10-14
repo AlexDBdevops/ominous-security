@@ -5,20 +5,15 @@
 //   diseñado para colgar expresiones regulares);
 // - como script normal: expone window.Ominous (fichas explicativas y, si el
 //   navegador no deja crear el worker, el mismo análisis en la página).
-const fs = require('fs');
-const path = require('path');
-const { analyzeTree, applyAutoFixes } = require('../lib/analyzer');
+const { analyzeTree } = require('../lib/analyzer');
 const { explain } = require('../lib/explain');
 const { impactOf } = require('../lib/review');
-const { zipChunks } = require('../lib/zippack');
 // En la página, la caché de OSV y deps.dev vive en la memoria de la pestaña: volver a analizar
 // el mismo repo (o uno con las mismas dependencias) no repite cientos de consultas.
 require('../lib/netcache').enable();
 const { parseGithubUrl, movedPass, scorecardCoverage, releasePass } = require('../lib/github');
 const ai = require('../lib/ai');
 const { fetchRepo, GhError } = require('./github');
-
-let last = null; // { root, files tocados por arreglos }
 
 // La página pasa un plazo (hora límite): el analizador para solo entre fichero y fichero
 // y devuelve lo revisado. En la página (sin Web Worker) nadie puede cortarlo desde fuera,
@@ -43,7 +38,6 @@ async function analyze(url, log = () => {}, token = null, { deadline = 0, inPage
   }
   log('Analizando el código…');
   const { aiContext, ...result } = await analyzeTree(got.root, got.meta, log, extra);
-  last = { root: got.root };
   return {
     id: `web-${got.commit.slice(0, 12)}`,
     web: true,
@@ -55,82 +49,6 @@ async function analyze(url, log = () => {}, token = null, { deadline = 0, inPage
   };
 }
 
-// Diff unificado de los arreglos automáticos (para descargar como parche y aplicarlo
-// con git apply en el clon). Los ficheros en memoria vuelven a su estado original.
-function patch(findings) {
-  if (!last) throw new Error('No hay ningún análisis en memoria.');
-  const root = last.root;
-  const files = [...new Set(findings.map((f) => f.file).filter(Boolean))];
-  const before = new Map();
-  for (const rel of files) { try { before.set(rel, fs.readFileSync(path.join(root, rel), 'utf8')); } catch { /* no existe */ } }
-  const applied = applyAutoFixes(root, findings);
-  const out = [];
-  for (const [rel, old] of before) {
-    const now = fs.readFileSync(path.join(root, rel), 'utf8');
-    if (now !== old) out.push(fileDiff(rel, old, now));
-    fs.writeFileSync(path.join(root, rel), old);
-  }
-  return { applied, diff: out.join('') };
-}
-
-// Ficheros del repo analizado (con los arreglos, si se piden) para que la página los escriba en
-// la carpeta que elijas. En memoria quedan como estaban.
-function exportFiles(findings) {
-  if (!last) throw new Error('No hay ningún análisis en memoria.');
-  const root = last.root;
-  const p = findings.length ? patch(findings) : { applied: [], diff: '' };
-  // patch() deja los ficheros como estaban: se vuelven a aplicar para copiarlos y se restauran
-  const before = new Map();
-  for (const rel of new Set(findings.map((f) => f.file).filter(Boolean))) { try { before.set(rel, fs.readFileSync(path.join(root, rel))); } catch { /* no existe */ } }
-  if (findings.length) applyAutoFixes(root, findings);
-  const files = [];
-  const stack = [''];
-  while (stack.length) {
-    const rel = stack.pop();
-    for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
-      const r = rel ? `${rel}/${e.name}` : e.name;
-      if (e.isDirectory()) stack.push(r);
-      else if (e.isFile()) files.push({ path: r, data: new Uint8Array(fs.readFileSync(path.join(root, r))) });
-    }
-  }
-  for (const [rel, old] of before) fs.writeFileSync(path.join(root, rel), old);
-  return { files, applied: p.applied, diff: p.diff };
-}
-
-// Los arreglos sustituyen líneas sin añadir ni quitar ninguna: basta comparar línea a línea.
-function fileDiff(rel, oldText, newText) {
-  if (/[\u0000-\u001f\u007f"\\]/.test(rel)) return ''; // git entrecomilla estas rutas: mejor no incluirlas
-  const eol = oldText.endsWith('\n');
-  const lines = (t) => { const l = t.split('\n'); if (t.endsWith('\n')) l.pop(); return l; };
-  const a = lines(oldText);
-  const b = lines(newText);
-  const last = a.length - 1;
-  const NOEOL = '\\ No newline at end of file\n';
-  const changed = [];
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) changed.push(i);
-  const hunks = [];
-  for (const i of changed) {
-    const s = Math.max(0, i - 3);
-    const e = Math.min(last, i + 3);
-    const h = hunks[hunks.length - 1];
-    if (h && s <= h.e + 1) h.e = e; else hunks.push({ s, e });
-  }
-  let txt = `diff --git a/${rel} b/${rel}\n--- a/${rel}\n+++ b/${rel}\n`;
-  const line = (sign, text, i) => `${sign}${text}\n${!eol && i === last ? NOEOL : ''}`;
-  for (const { s, e } of hunks) {
-    const n = e - s + 1;
-    txt += `@@ -${s + 1},${n} +${s + 1},${n} @@\n`;
-    let dels = [];
-    let adds = [];
-    const flush = () => { txt += dels.map(([t, i]) => line('-', t, i)).join('') + adds.map(([t, i]) => line('+', t, i)).join(''); dels = []; adds = []; };
-    for (let i = s; i <= e; i++) {
-      if (a[i] === b[i]) { flush(); txt += line(' ', a[i], i); } else { dels.push([a[i], i]); adds.push([b[i], i]); }
-    }
-    flush();
-  }
-  return txt;
-}
-
 function errInfo(e) {
   return { message: e.message, status: e.status || 0, reasons: e.reasons || [], hint: e.hint || null };
 }
@@ -139,18 +57,6 @@ function errInfo(e) {
 async function handle(msg, post) {
   try {
     if (msg.type === 'analyze') post({ result: await analyze(msg.url, (m) => post({ log: m }), msg.token || null, { deadline: Number(msg.deadline) || 0, inPage: msg.inPage === true, signal: msg.signal || null }) });
-    else if (msg.type === 'patch') post({ result: patch(msg.findings || []) });
-    else if (msg.type === 'export') post({ result: exportFiles(msg.findings || []) });
-    else if (msg.type === 'zip') {
-      // El mismo contenido, en un zip para descargarlo (navegadores sin selector de carpetas)
-      const x = exportFiles(msg.findings || []);
-      const name = String(msg.name || 'repo');
-      const parts = [...zipChunks(x.files.map((f) => ({ name: `${name}/${f.path}`, data: f.data })))];
-      const zip = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
-      let o = 0;
-      for (const p of parts) { zip.set(p, o); o += p.length; }
-      post({ result: { zip, files: x.files.length, applied: x.applied, diff: x.diff } });
-    }
     else post({ error: { message: 'Mensaje desconocido' } });
   } catch (e) {
     post({ error: errInfo(e) });
@@ -164,4 +70,4 @@ if (isWorker) {
   window.Ominous = Object.freeze({ explain, impactOf, parseGithubUrl, handle });
 }
 
-module.exports = { analyze, patch, fileDiff, handle };
+module.exports = { analyze, handle };

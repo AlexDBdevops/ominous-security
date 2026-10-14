@@ -467,7 +467,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   // 'web-ai' artefacto de claude.ai: análisis en el navegador y revisión con la cuenta de claude.ai.
   const EDITION = 'local';
   const WEB = EDITION !== 'local';
-  let engine = null; // worker (o la propia página) que guarda en memoria el último repo analizado
+  let engine = null; // worker (o la propia página) que analiza el repo en el navegador
 
   function el(tag, attrs = {}, ...kids) {
     const n = document.createElement(tag);
@@ -742,7 +742,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     v.classList.add('reveal');
     const verdictText = {
       green: 'No he encontrado problemas relevantes. Puedes clonarlo.',
-      yellow: 'Hay puntos a revisar antes de usarlo. Clonar requiere confirmación.',
+      yellow: WEB ? 'Hay puntos a revisar antes de usarlo.' : 'Hay puntos a revisar antes de usarlo. Clonar requiere confirmación.',
       red: 'Riesgo alto. No recomiendo clonarlo ni ejecutarlo.',
     }[s.overall];
     const meta = d.repo.meta || {};
@@ -812,7 +812,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       f.snippet ? el('pre', { class: 'snip' }, f.snippet) : null);
     if (f.kind === 'vuln') {
       card.append(f.fixable
-        ? el('div', { class: 'fix yes' }, el('b', {}, 'Lo arreglo:'), el('span', {}, f.fix.text, f.fix.auto && f.severity !== 'info' ? el('span', { class: 'tag' }, current && current.web ? 'automático, en el parche' : 'automático al clonar') : null))
+        ? el('div', { class: 'fix yes' }, el('b', {}, 'Lo arreglo:'), el('span', {}, f.fix.text, f.fix.auto && f.severity !== 'info' ? el('span', { class: 'tag' }, WEB ? 'automático al clonar con la app local' : 'automático al clonar') : null))
         : el('div', { class: 'fix no' }, el('b', {}, 'No arreglable:'), el('span', {}, f.notFixableReason)));
     }
     if (f.decoded) card.append(reBlock(f.decoded));
@@ -1251,43 +1251,38 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     }
   });
 
-  // ---------- Clonado ----------
+  // ---------- Clonado (solo en la app local: la versión web no clona) ----------
   // Clonar en una carpeta que eliges: el navegador escribe en ella (File System Access API, en
   // Chrome y Edge). No dentro de un marco ajeno, como la vista previa de claude.ai, donde no se permite.
   // Descargar un .zip funciona en cualquier navegador, salvo dentro de un marco (vista previa).
   const IN_FRAME = window.self !== window.top;
   const CAN_PICK = typeof window.showDirectoryPicker === 'function' && !IN_FRAME;
   const CAN_ZIP = !IN_FRAME;
-  const realClone = () => LIVE || !!(current && current.web);
-  const cloneMode = () => (realClone() ? (document.querySelector('input[name="where"]:checked') || {}).value || 'dir' : 'dir');
+  const cloneMode = () => (LIVE ? (document.querySelector('input[name="where"]:checked') || {}).value || 'dir' : 'dir');
   function syncWhere() {
-    const web = !!(current && current.web) || WEB;
     const m = cloneMode();
-    $('#destRow').hidden = web ? m !== 'pick' : m === 'zip';
+    $('#destRow').hidden = m === 'zip';
     $('#dest').placeholder = m === 'pick' ? `Si la carpeta que eliges no está vacía, se crea dentro esta (por defecto, ${current ? current.repo.name : 'el nombre del repo'})` : `Nombre de la carpeta en ${cloneDirLabel} (por defecto, el del repo)`;
     if (!current) return;
     const n = current.summary.autoFixable;
     const fixes = `${n} arreglo${n > 1 ? 's' : ''} automático${n > 1 ? 's' : ''}`;
-    $('#fixChkText').textContent = web && m === 'dir' ? `Descargar también un parche con ${fixes}` : `Aplicar ${fixes} al clonar`;
+    $('#fixChkText').textContent = `Aplicar ${fixes} al clonar`;
     const name = current.repo.name;
-    $('#cloneBtn').textContent = m === 'pick' ? `Elegir carpeta y clonar ${name}` : m === 'zip' ? `Descargar ${name}.zip` : web ? 'Ver el comando para clonar' : `Clonar ${name} en la carpeta de clones`;
+    $('#cloneBtn').textContent = m === 'pick' ? `Elegir carpeta y clonar ${name}` : m === 'zip' ? `Descargar ${name}.zip` : `Clonar ${name} en la carpeta de clones`;
   }
   document.querySelectorAll('input[name="where"]').forEach((r) => r.addEventListener('change', syncWhere));
 
   function renderClone() {
+    if (WEB) { $('#clonePanel').hidden = true; return; }
     const s = current.summary;
-    // En la versión web, los ejemplos simulados también: ahí no hay carpeta de clones
-    const web = !!current.web || WEB;
     $('#clonePanel').hidden = false;
-    $('#whereRow').hidden = !realClone();
+    $('#whereRow').hidden = !LIVE;
     $('#wherePickWrap').hidden = !CAN_PICK;
     $('#whereZipWrap').hidden = !CAN_ZIP;
     $('#whereNote').hidden = CAN_PICK;
     $('#whereNote').textContent = 'Este navegador no deja que una página elija una carpeta de tu equipo: lo permiten Chrome y Edge de escritorio (no Firefox, Safari, Brave ni los móviles).' + (CAN_ZIP ? ' Con el .zip tienes lo mismo: lo descomprimes donde quieras.' : '');
     (CAN_PICK ? $('#wherePick') : CAN_ZIP ? $('#whereZip') : $('#whereDir')).checked = true;
-    $('#whereDirText').textContent = web ? 'Ver el comando para clonarlo con git (y el parche, si lo pides)' : `En la carpeta de clones de la app, ${cloneDirLabel} (con vigilancia diaria de sus dependencias)`;
-    $('#destRow').hidden = web;
-    $('#cloneH').textContent = web ? 'Clonar en tu equipo' : 'Clonar';
+    $('#whereDirText').textContent = `En la carpeta de clones de la app, ${cloneDirLabel} (con vigilancia diaria de sus dependencias)`;
     $('#cloneOut').hidden = true;
     $('#ackChk').checked = false;
     $('#fixChk').checked = false;
@@ -1310,46 +1305,6 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     $('#cloneBtn').disabled = !current || !!current.aiPending || (risky && !$('#ackChk').checked);
   }
   $('#ackChk').addEventListener('change', syncCloneBtn);
-
-  // Versión web: no hay servidor que clone. Se da el comando que deja el clon en el
-  // commit exacto analizado y, si se pide, el parche con los arreglos automáticos.
-  async function saveFile(name, text) {
-    const dl = window.claude && typeof window.claude.use === 'function' ? await window.claude.use('downloads').catch(() => null) : null;
-    if (dl) { await dl.save({ filename: `${name}.txt`, data: text }); return `${name}.txt`; }
-    const a = el('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/x-diff' })), download: name });
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    return name;
-  }
-
-  async function webClone() {
-    const r = current.repo;
-    const dir = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,99}$/.test(r.name) && !/^\.+$/.test(r.name) ? r.name : 'repo';
-    const lines = [`git clone --no-checkout --no-recurse-submodules -- ${r.url}.git ./${dir}`, `git -C ./${dir} checkout -q ${r.commit}`];
-    const parts = [el('div', {}, 'Ejecútalo en tu terminal. Clona el commit exacto que se ha analizado (', el('code', {}, String(r.commit).slice(0, 10)), '), sin submódulos.')];
-    if ($('#fixChk').checked) {
-      if (!engine) throw new Error('El análisis ya no está en memoria. Vuelve a analizar el repo para generar el parche.');
-      const auto = current.vulnerabilities.filter((v) => v.fix && v.fix.auto && v.severity !== 'info');
-      const p = await engine.send({ type: 'patch', findings: auto });
-      if (p.diff) {
-        const name = await saveFile(`ominous-arreglos-${dir}.patch`, p.diff);
-        lines.push(`git -C ./${dir} apply RUTA/${name}`);
-        const files = new Set(p.applied.map((f) => f.file)).size;
-        parts.push(el('div', { class: 'changes' }, el('h3', {}, `Parche: ${p.applied.length} arreglo${p.applied.length > 1 ? 's' : ''} en ${files} fichero${files > 1 ? 's' : ''}`),
-          el('p', { class: 'ai-note' }, `Se ha descargado ${name}. Cambia RUTA por la carpeta donde se guardó. Revisa el diff antes de aplicarlo.`), diffView(p.diff)));
-      }
-    }
-    const cmd = lines.join('\n');
-    const copy = el('button', { class: 'btn sm ghost', type: 'button' }, 'Copiar');
-    copy.addEventListener('click', () => {
-      navigator.clipboard.writeText(cmd).then(() => { copy.textContent = 'Copiado'; }, () => { copy.textContent = 'No se pudo copiar: selecciónalo a mano'; });
-    });
-    parts.splice(1, 0, el('pre', { class: 'cmd' }, cmd), copy);
-    if (current.summary.overall === 'red') parts.push(el('p', { class: 'ai-note' }, 'No abras la carpeta en un editor que confíe en ella ni instales sus dependencias: las amenazas siguen ahí.'));
-    return parts;
-  }
 
   // ---------- Escribir el clon en la carpeta elegida ----------
   // Cada parte de la ruta tiene que ser un nombre normal: nada de "..", barras ni caracteres de
@@ -1423,18 +1378,11 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   // Lo que se enseña al terminar, igual para la carpeta elegida y para el .zip
   function cloneResult({ where, files, failed = [], r, zip = false }) {
     const c = String(current.repo.commit);
-    const parts = [el('div', {}, zip ? 'Descargando ' : current.web ? 'Copiado en ' : 'Clonado en ', el('code', {}, where), ` (commit ${c.slice(0, 10)}, ${files} ficheros).${zip ? ' Descomprímelo donde quieras: dentro hay una carpeta con el nombre del repo.' : ''}`)];
-    if (current.web) {
-      // Sin servidor no hay .git: estos comandos lo convierten en un clon de ese commit
-      const name = zip ? current.repo.name : where.split('/').pop();
-      const cmd = [`cd ${name}`, 'git init -q', `git remote add origin ${current.repo.url}.git`, `git fetch -q --depth 1 origin ${c}`, 'git reset -q FETCH_HEAD'].join('\n');
-      parts.push(el('div', {}, 'Son los ficheros del commit analizado, sin historial de git. Para tenerlo como repositorio de git (con los arreglos como cambios sin confirmar):'), el('pre', { class: 'cmd' }, cmd));
-    } else {
-      parts.push(el('p', { class: 'ai-note' }, `Es un clon de git completo de esa rama. ${zip ? 'El .zip no guarda' : 'El navegador no puede crear'} enlaces simbólicos ni permisos de ejecución: los enlaces quedan como ficheros de texto y el clon está configurado para que git no lo vea como cambios. La vigilancia diaria solo la tienen los clones de la carpeta de clones de la app.`));
-    }
+    const parts = [el('div', {}, zip ? 'Descargando ' : 'Clonado en ', el('code', {}, where), ` (commit ${c.slice(0, 10)}, ${files} ficheros).${zip ? ' Descomprímelo donde quieras: dentro hay una carpeta con el nombre del repo.' : ''}`)];
+    parts.push(el('p', { class: 'ai-note' }, `Es un clon de git completo de esa rama. ${zip ? 'El .zip no guarda' : 'El navegador no puede crear'} enlaces simbólicos ni permisos de ejecución: los enlaces quedan como ficheros de texto y el clon está configurado para que git no lo vea como cambios. La vigilancia diaria solo la tienen los clones de la carpeta de clones de la app.`));
     if (r.pinnedToAnalyzedCommit) parts.push(el('div', {}, 'El repositorio cambió después del análisis: lo he dejado en el commit analizado.'));
     if (failed.length) parts.push(el('div', { class: 'warnline' }, `${failed.length} fichero${failed.length > 1 ? 's' : ''} con nombres que tu sistema no admite no se han escrito: ${failed.slice(0, 5).join(', ')}${failed.length > 5 ? '…' : ''}`));
-    if ((r.fixesApplied || r.applied || []).length) parts.push(changesBlock({ ...r, fixesApplied: r.fixesApplied || r.applied, picked: true, web: !!current.web }));
+    if ((r.fixesApplied || r.applied || []).length) parts.push(changesBlock({ ...r, fixesApplied: r.fixesApplied || r.applied, picked: true }));
     if (current.summary.overall === 'red') parts.push(el('p', { class: 'ai-note' }, 'No abras la carpeta en un editor que confíe en ella ni instales sus dependencias: las amenazas siguen ahí.'));
     return parts;
   }
@@ -1446,7 +1394,6 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     if (!prep.ok) throw new Error(r.error || 'No se pudo preparar el clon');
     return r;
   }
-  const autoFindings = () => current.vulnerabilities.filter((v) => v.fix && v.fix.auto && v.severity !== 'info');
 
   async function pickAndClone() {
     const btn = $('#cloneBtn');
@@ -1475,32 +1422,14 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         if (exists) { for await (const _ of exists.keys()) throw new Error(`Ya hay una carpeta "${name}" con contenido en ${parent.name}. Elige una carpeta vacía u otro nombre.`); } // eslint-disable-line no-unused-vars
       }
       const fixes = $('#fixChk').checked;
-      let r;
-      let res;
-      if (current.web) {
-        btn.textContent = 'Preparando los ficheros…';
-        r = await engine.send({ type: 'export', findings: fixes ? autoFindings() : [] });
-      } else {
-        btn.textContent = fixes ? 'Clonando y aplicando arreglos…' : 'Clonando…';
-        r = await prepareClone(fixes);
-        res = await fetch(`/api/export/${r.token}`);
-        if (!res.ok || !res.body) throw new Error('No se pudo descargar el clon preparado.');
-      }
+      btn.textContent = fixes ? 'Clonando y aplicando arreglos…' : 'Clonando…';
+      const r = await prepareClone(fixes);
+      const res = await fetch(`/api/export/${r.token}`);
+      if (!res.ok || !res.body) throw new Error('No se pudo descargar el clon preparado.');
       const dir = empty ? parent : await parent.getDirectoryHandle(name, { create: true });
       const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
-      let w;
-      if (current.web) {
-        const failed = [];
-        let i = 0;
-        for (const f of r.files) {
-          try { await writeFile(dir, f.path, (wr) => wr.write(f.data)); } catch { failed.push(f.path); }
-          if (++i % 50 === 0) btn.textContent = `Escribiendo… ${i} de ${r.files.length} ficheros`;
-        }
-        w = { files: r.files.length - failed.length, failed };
-      } else {
-        const total = Number(res.headers.get('x-ominous-bytes')) || r.bytes || 0;
-        w = await untarInto(res.body, dir, (bytes, n) => { btn.textContent = `Escribiendo… ${mb(bytes)}${total ? ` de ${mb(total)}` : ''} (${n} ficheros)`; });
-      }
+      const total = Number(res.headers.get('x-ominous-bytes')) || r.bytes || 0;
+      const w = await untarInto(res.body, dir, (bytes, n) => { btn.textContent = `Escribiendo… ${mb(bytes)}${total ? ` de ${mb(total)}` : ''} (${n} ficheros)`; });
       out.className = 'done-box';
       const base = parent.name || 'la carpeta elegida';
       out.replaceChildren(...cloneResult({ where: empty ? base : `${base}/${name}`, files: w.files, failed: w.failed, r }));
@@ -1515,8 +1444,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     }
   }
 
-  // .zip para cualquier navegador: lo prepara la app (clon de git completo) o, en la versión web,
-  // el analizador con los ficheros que tiene en memoria.
+  // .zip para cualquier navegador: lo prepara la app (clon de git completo)
   async function zipClone() {
     const btn = $('#cloneBtn');
     const out = $('#cloneOut');
@@ -1526,22 +1454,13 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     const fixes = $('#fixChk').checked;
     const name = /^[\w.-]{1,100}$/.test(current.repo.name) && !/^\.+$/.test(current.repo.name) ? current.repo.name : 'repo';
     try {
-      let r;
-      let href;
-      if (current.web) {
-        btn.textContent = 'Preparando el .zip…';
-        r = await engine.send({ type: 'zip', findings: fixes ? autoFindings() : [], name });
-        href = URL.createObjectURL(new Blob([r.zip], { type: 'application/zip' }));
-      } else {
-        btn.textContent = fixes ? 'Clonando y aplicando arreglos…' : 'Clonando…';
-        r = await prepareClone(fixes);
-        href = `/api/export/${r.token}?formato=zip`;
-      }
+      btn.textContent = fixes ? 'Clonando y aplicando arreglos…' : 'Clonando…';
+      const r = await prepareClone(fixes);
+      const href = `/api/export/${r.token}?formato=zip`;
       const a = el('a', { href, download: `${name}.zip` });
       document.body.append(a);
       a.click();
       a.remove();
-      if (href.startsWith('blob:')) setTimeout(() => URL.revokeObjectURL(href), 60000);
       out.className = 'done-box';
       out.replaceChildren(...cloneResult({ where: `${name}.zip`, files: r.files, r, zip: true }));
       out.hidden = false;
@@ -1560,27 +1479,6 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     const mode = cloneMode();
     if (mode === 'pick') return pickAndClone();
     if (mode === 'zip') return zipClone();
-    if (!current.web && WEB) {
-      const out = $('#cloneOut');
-      out.className = 'done-box';
-      out.replaceChildren(...demoWebClone({ applyFixes: $('#fixChk').checked }));
-      out.hidden = false;
-      return;
-    }
-    if (current.web) {
-      btn.disabled = true;
-      const out = $('#cloneOut');
-      try {
-        out.className = 'done-box';
-        out.replaceChildren(...await webClone());
-      } catch (e) {
-        out.className = 'err';
-        out.textContent = e && e.code ? `No se pudo descargar el parche (${e.code}).` : e.message;
-      }
-      out.hidden = false;
-      syncCloneBtn();
-      return;
-    }
     btn.disabled = true;
     btn.textContent = $('#fixChk').checked ? 'Clonando y aplicando arreglos…' : 'Clonando…';
     const out = $('#cloneOut');
@@ -1650,7 +1548,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       }
     });
     // En una carpeta elegida en el navegador la app no puede tocar nada: se deshace con git
-    box.append(r.picked ? el('p', { class: 'ai-note' }, r.web ? 'Para deshacerlos, vuelve a copiar sin marcar los arreglos.' : 'Para deshacerlos: git checkout -- . dentro de la carpeta.') : undo);
+    box.append(r.picked ? el('p', { class: 'ai-note' }, 'Para deshacerlos: git checkout -- . dentro de la carpeta.') : undo);
     return box;
   }
 
@@ -1665,18 +1563,6 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     vuln: 'He aplicado 4 arreglos en 4 ficheros. Todos son sustituciones de una sola línea y no añaden ni quitan funcionalidad.\n- app.py:88: el servidor arrancaba con debug=True, que expone el depurador de Werkzeug y permite ejecutar código desde el navegador. Ahora arranca con debug=False.\n- inventory/config.py:14: yaml.load podía construir objetos Python arbitrarios al leer el YAML. yaml.safe_load solo crea tipos básicos (listas, diccionarios, texto, números).\n- inventory/sync.py:31: la llamada al proveedor aceptaba cualquier certificado (verify=False). Ahora se verifica, así que un ataque man-in-the-middle ya no pasa desapercibido.\n- inventory/auth.py:9: el token se calculaba con MD5. Ahora usa SHA-256.\nPosibles efectos secundarios: los tokens generados antes con MD5 dejarán de coincidir y los usuarios tendrán que volver a iniciar sesión. Si el proveedor usa un certificado autofirmado, la sincronización fallará hasta que configures su CA.',
     evil: 'He aplicado 1 arreglo en 1 fichero.\n- src/rpc.js:3: la línea desactivaba la verificación TLS para todo el proceso de Node. La he sustituido por un comentario, así que las conexiones vuelven a validar certificados.\nPosibles efectos secundarios: ninguno en el código legítimo. Ojo: este arreglo no neutraliza las amenazas deliberadas del repositorio (payloads ocultos, tarea de VS Code, postinstall). No abras ni instales este proyecto.',
   };
-  // Ejemplo simulado en la versión web: lo que da "Ver el comando para clonar" con un repo real
-  function demoWebClone(body) {
-    const r = demoClone(body);
-    const { owner, name, commit } = current.repo;
-    const cmd = [`git clone --no-checkout --no-recurse-submodules -- https://github.com/${owner}/${name}.git ./${name}`, `git -C ./${name} checkout -q ${commit}`].join('\n');
-    return [
-      el('div', {}, 'Simulación: con un repo real, este es el comando que clona el commit analizado. En Chrome y Edge también puedes elegir una carpeta de tu equipo, y en cualquier navegador descargar un .zip.'),
-      el('pre', { class: 'cmd' }, cmd),
-      r.fixesApplied.length ? changesBlock(r) : null,
-    ].filter(Boolean);
-  }
-
   function demoClone(body) {
     const fixes = body.applyFixes ? current.vulnerabilities.filter((v) => v.fix && v.fix.auto && v.severity !== 'info') : [];
     const kind = String(current.id).replace('demo-', '');
