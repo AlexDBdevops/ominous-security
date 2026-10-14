@@ -233,6 +233,8 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
 .conn.bad { color: var(--bad); border-color: var(--bad); }
 .conn.bad::before { background: var(--bad); }
 .conn:hover { border-color: var(--accent); }
+.conn.lang::before { display: none; }
+.conn.lang { font-family: var(--f-mono); letter-spacing: .06em; }
 dialog.cdlg { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 12px; padding: 0; width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
 dialog.cdlg::backdrop { background: rgba(5, 7, 10, .65); }
 .cdlg form { display: grid; gap: 14px; padding: 18px; }
@@ -324,6 +326,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       <div><h1>Ominous Security</h1><small>Revisa un repositorio de GitHub antes de clonarlo</small></div>
     </div>
     <div class="top-right">
+      <button id="langBtn" class="conn lang" type="button" data-noi18n lang="en" aria-label="Change language: English">EN</button>
       <button id="connBtn" class="conn" type="button" aria-haspopup="dialog">Conectar Claude</button>
       <span id="mode" class="mode">Conectando…</span>
     </div>
@@ -468,6 +471,62 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   const EDITION = 'local';
   const WEB = EDITION !== 'local';
   let engine = null; // worker (o la propia página) que analiza el repo en el navegador
+
+  // ---------- Idioma ----------
+  // La página se escribe en español; en inglés, un observador traduce lo que se pinta con
+  // window.Ominous.tr (lib/i18n.js). No toca código, diffs ni comandos, y lo que no conoce
+  // (la respuesta de la IA, los avisos de OSV) se queda como llega.
+  const NO_I18N = 'pre, code, textarea, script, style, .snip, .diff, .cmd, [data-noi18n]';
+  const I18N_ATTRS = ['placeholder', 'title', 'aria-label'];
+  const ORIG = new WeakMap();      // nodo de texto → texto original en español
+  const ORIG_ATTR = new WeakMap(); // elemento → { atributo: original }
+  let LANG = '';
+  try { LANG = localStorage.getItem('ominous-lang') || ''; } catch { /* sin almacenamiento */ }
+  if (LANG !== 'es' && LANG !== 'en') LANG = /^es\b/i.test(navigator.language || '') ? 'es' : 'en';
+  const trText = (s) => (LANG === 'en' && window.Ominous && window.Ominous.tr ? window.Ominous.tr(s) : s);
+  function i18nAttrs(el) {
+    let saved = ORIG_ATTR.get(el);
+    for (const a of I18N_ATTRS) {
+      if (!el.hasAttribute(a)) continue;
+      if (!saved) ORIG_ATTR.set(el, (saved = {}));
+      if (!(a in saved)) saved[a] = el.getAttribute(a);
+      const want = trText(saved[a]);
+      if (el.getAttribute(a) !== want) el.setAttribute(a, want);
+    }
+  }
+  function i18nTree(n) {
+    if (n.nodeType === 3) {
+      if (!n.parentElement || n.parentElement.closest(NO_I18N)) return;
+      if (!ORIG.has(n)) ORIG.set(n, n.data);
+      const want = trText(ORIG.get(n));
+      if (n.data !== want) n.data = want;
+    } else if (n.nodeType === 1 && !n.closest(NO_I18N)) {
+      i18nAttrs(n);
+      for (const c of n.childNodes) i18nTree(c);
+    }
+  }
+  const i18nObserver = new MutationObserver((records) => {
+    for (const r of records) {
+      if (r.type === 'characterData') { ORIG.set(r.target, r.target.data); i18nTree(r.target); }
+      else if (r.type === 'attributes') { const s = ORIG_ATTR.get(r.target); if (s) delete s[r.attributeName]; i18nAttrs(r.target); }
+      else r.addedNodes.forEach(i18nTree);
+    }
+    i18nObserver.takeRecords(); // lo que acaba de cambiar el propio traductor
+  });
+  function setLang(l) {
+    LANG = l;
+    try { localStorage.setItem('ominous-lang', l); } catch { /* sin almacenamiento */ }
+    document.documentElement.lang = l;
+    const b = $('#langBtn');
+    b.textContent = l === 'es' ? 'EN' : 'ES';
+    b.lang = l === 'es' ? 'en' : 'es';
+    b.setAttribute('aria-label', l === 'es' ? 'Change language: English' : 'Cambiar idioma: español');
+    i18nTree(document.body);
+    i18nObserver.takeRecords();
+  }
+  $('#langBtn').addEventListener('click', () => setLang(LANG === 'es' ? 'en' : 'es'));
+  i18nObserver.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: I18N_ATTRS });
+  setLang(LANG);
 
   function el(tag, attrs = {}, ...kids) {
     const n = document.createElement(tag);

@@ -8,6 +8,7 @@
 const { analyzeTree } = require('../lib/analyzer');
 const { explain } = require('../lib/explain');
 const { impactOf } = require('../lib/review');
+const { tr } = require('../lib/i18n');
 // En la página, la caché de OSV y deps.dev vive en la memoria de la pestaña: volver a analizar
 // el mismo repo (o uno con las mismas dependencias) no repite cientos de consultas.
 require('../lib/netcache').enable();
@@ -67,7 +68,7 @@ const isWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof Wor
 if (isWorker) {
   self.onmessage = (ev) => handle(ev.data || {}, (m) => self.postMessage(m));
 } else if (typeof window !== 'undefined') {
-  window.Ominous = Object.freeze({ explain, impactOf, parseGithubUrl, handle });
+  window.Ominous = Object.freeze({ explain, impactOf, parseGithubUrl, handle, tr });
 }
 
 module.exports = { analyze, handle };
