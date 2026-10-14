@@ -210,7 +210,7 @@ En las ediciones web, `public/analyzer.js` (el mismo analizador de `lib/`, empaq
 3. Pasa las mismas reglas que el servidor (los tests comprueban que los hallazgos son idénticos) y consulta OSV.dev, OpenSSF Scorecard, deps.dev, EPSS y los registros de npm y PyPI (ver [Más allá del repo](#más-allá-del-repo)).
 4. El análisis tiene 5 minutos. Hacia los 3 minutos y 45 segundos deja de leer ficheros y de hacer consultas y devuelve lo revisado, marcado como incompleto; si a los 5 minutos sigue atascado (un fichero diseñado para colgar analizadores), la página corta el worker. Si el navegador no deja usar un worker, el análisis corre en la propia página con el plazo completo y lee como mucho 1,5 MB de cada fichero.
 
-Para clonar, en Chrome y Edge puedes elegir una carpeta de tu equipo: la página escribe en ella los ficheros del commit analizado, con los arreglos automáticos si los marcas, y te da los comandos para convertirla en un repositorio de git de ese commit. En los demás navegadores da el comando que deja el clon en el commit analizado y, si se pide, descarga un parche con los arreglos para aplicarlo con `git apply`.
+Las ediciones web solo analizan: no clonan, no descargan el repo ni generan parches. Clonar (con los arreglos automáticos y la vigilancia diaria) es cosa del servidor local o del contenedor.
 
 Cada hallazgo lleva una ficha **¿Qué es esto?** sin IA: el tipo de fallo (con su CWE), por qué importa, qué comprobar y, en las dependencias, los avisos publicados en OSV.dev (identificadores CVE/GHSA, resumen, versión corregida y enlaces).
 
