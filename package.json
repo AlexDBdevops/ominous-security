@@ -29,7 +29,7 @@
     "LICENSE"
   ],
   "optionalDependencies": {
-    "@anthropic-ai/sdk": "0.128.0"
+    "@anthropic-ai/sdk": "0.133.0"
   },
   "repository": {
     "type": "git",
