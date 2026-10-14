@@ -37,7 +37,7 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@noble/ciphers": "2.0.1",
+    "@noble/ciphers": "2.4.0",
     "@noble/hashes": "2.0.1",
     "buffer": "6.0.3",
     "esbuild": "0.28.2",
