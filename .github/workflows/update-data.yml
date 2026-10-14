@@ -7,10 +7,15 @@
 # otros workflows. Hace falta activar, una vez, Settings > Actions > General >
 # "Allow GitHub Actions to create and approve pull requests".
 #
+# Un PR abierto con github.token no lanza workflows (GitHub lo evita para que no se encadenen),
+# así que sus checks obligatorios no llegarían nunca. Por eso, al abrirlo, se lanzan a mano CI
+# y CodeQL sobre la rama (workflow_dispatch sí está permitido): sus checks quedan en el commit
+# del PR y main sigue exigiéndolos.
+#
 # Las vulnerabilidades de las dependencias no necesitan esto: se consultan en OSV.dev en
 # cada análisis.
 
-name: Actualizar datos
+name: Update data
 
 on:
   schedule:
@@ -30,6 +35,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write   # lanzar CI y CodeQL sobre la rama del PR
     env:
       OMINOUS_OFFLINE: '1'
     steps:
@@ -57,13 +63,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           day=$(date -u +%Y-%m-%d)
-          branch="datos/$day"
+          branch="data/$day"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git switch -c "$branch"
           git add data public/analyzer.js
-          git commit -m "Datos: catálogo KEV y paquetes populares ($day)"
+          git commit -m "Data: KEV catalog and popular packages ($day)"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
           gh pr create --base main --head "$branch" \
-            --title "Datos: catálogo KEV y paquetes populares ($day)" \
-            --body "Actualización automática de \`data/kev.json\` y \`data/popular.json\` con \`npm run update:data\`. Lint y tests ya han pasado en el workflow *Actualizar datos*. Revisa el diff antes de fusionar."
+            --title "Data: KEV catalog and popular packages ($day)" \
+            --body "Automatic refresh of \`data/kev.json\` and \`data/popular.json\` with \`npm run update:data\`. Lint and tests already passed in the *Update data* workflow; CI and CodeQL are dispatched on this branch. Review the diff before merging."
+          gh workflow run ci.yml --ref "$branch"
+          gh workflow run codeql.yml --ref "$branch"
