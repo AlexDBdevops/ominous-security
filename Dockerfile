@@ -17,7 +17,11 @@ RUN apk add --no-cache git tini \
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+# npm, corepack y yarn solo hacen falta para instalar: fuera de la imagen final (el npm que trae
+# la imagen base arrastra sus propias vulnerabilidades y la app no lo usa)
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force \
+ && rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+      /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-* /tmp/* /root/.npm
 COPY server.js ./
 COPY lib ./lib
 COPY data ./data
