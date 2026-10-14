@@ -49,6 +49,8 @@ const SCANNER_URL = process.env.OMINOUS_SCANNER_URL || '';
 const PROXY_FROM = process.env.OMINOUS_PROXY_FROM || '';
 // El contenedor de análisis: si su IP llegara en una cabecera PROXY, se rechaza
 const PROXY_DENY = process.env.OMINOUS_PROXY_DENY || '';
+// Mensajes de error en el registro en una sola línea (pueden llevar texto del repo o de la petición)
+const oneLine = (m) => String(m).replace(/[\u0000-\u001f\u007f]/g, ' ');
 const clientIp = (req) => req.socket.clientAddress || req.socket.remoteAddress;
 const analyses = new Map(); // id -> { repo, commit, result, at }
 const watch = new Watch(CLONE_DIR);
@@ -377,7 +379,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/x-ndjson; charset=utf-8' });
         const line = (o) => { if (!res.destroyed) res.write(`${JSON.stringify(o)}\n`); };
         try { line({ result: await analyze(body.url, (m) => line({ log: String(m).slice(0, 300) })) }); } catch (e) {
-          console.error(`✗ ${e.message}`);
+          console.error(`✗ ${oneLine(e.message)}`);
           line({ error: e.status ? e.message : 'Error interno', status: e.status || 500 });
         } finally { running--; res.end(); }
         return;
@@ -437,7 +439,7 @@ const server = http.createServer(async (req, res) => {
     }
     send(res, 404, { error: 'No encontrado' });
   } catch (e) {
-    console.error(`✗ ${e.message}`);
+    console.error(`✗ ${oneLine(e.message)}`);
     if (!res.headersSent) send(res, e.status || 500, { error: e.status ? e.message : 'Error interno' });
   }
 });
