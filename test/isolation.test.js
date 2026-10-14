@@ -101,3 +101,10 @@ test('aislamiento: el scanner no comparte red con la pasarela de entrada', () =>
   assert.match(yaml, /salida-scanner:[\s\S]*?GATEWAY_PORT: "0"/, 'la salida del scanner no tiene entrada');
   assert.match(yaml, /OMINOUS_PROXY_DENY: scanner/);
 });
+
+test('aislamiento: los identificadores de OSV llegan a la app (la vigilancia los da por conocidos)', () => {
+  const s = ok();
+  s.result.vulnerabilities = [{ rule: 'dep-vuln', severity: 'high', title: 'werkzeug@0.14.1', file: 'requirements.txt', fixable: true, advisories: ['GHSA-xg9f-g7g7-2323', 'CVE-2023-25577', '-x', '../a', 'a b', 7] }];
+  const r = checkScan(s, ref);
+  assert.deepEqual(r.result.vulnerabilities[0].advisories, ['GHSA-xg9f-g7g7-2323', 'CVE-2023-25577']);
+});
