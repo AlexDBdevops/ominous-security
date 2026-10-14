@@ -30,7 +30,7 @@
     "LICENSE"
   ],
   "optionalDependencies": {
-    "@anthropic-ai/sdk": "0.128.0",
+    "@anthropic-ai/sdk": "0.133.0",
     "@babel/parser": "7.29.9"
   },
   "repository": {
@@ -39,8 +39,8 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@noble/ciphers": "2.0.1",
-    "@noble/hashes": "2.0.1",
+    "@noble/ciphers": "2.4.0",
+    "@noble/hashes": "2.4.0",
     "buffer": "6.0.3",
     "esbuild": "0.28.2",
     "fflate": "0.8.3",
