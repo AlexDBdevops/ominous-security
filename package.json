@@ -18,7 +18,7 @@
     "gold": "node test/gold/score.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "files": [
     "server.js",
