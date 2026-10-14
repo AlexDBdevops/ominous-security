@@ -110,7 +110,7 @@ jobs:
         run: node bin/ominous-scan.js . --exclude "$EXCLUDE" --fail-on red --sarif ominous.sarif --json ominous-report.json
       - name: Subir hallazgos a Code scanning
         if: always() && github.event.repository.visibility == 'public'
-        uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b # v3.38.3
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: ominous.sarif
           category: ominous-security
