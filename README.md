@@ -384,7 +384,7 @@ Los tests generan sus repos trampa en una carpeta temporal en cada ejecución (`
 | `pages` | versión web en GitHub Pages (solo en `main`) |
 | `release` | release de GitHub al subir una etiqueta `vX.Y.Z` que coincida con `package.json` |
 
-`codeql.yml` pasa CodeQL cada semana y en cada PR, `update-data.yml` refresca cada semana los [datos que envejecen](#datos-que-se-actualizan-solos) con un PR, y Dependabot vigila npm, las acciones y la imagen base: un PR agrupado por ecosistema y solo versiones con al menos 7 días publicadas (14 si son mayores).
+`codeql.yml` pasa CodeQL cada semana y en cada PR, `update-data.yml` refresca cada semana los [datos que envejecen](#datos-que-se-actualizan-solos) con un PR, y Dependabot vigila npm, las acciones y la imagen base: un PR agrupado por ecosistema y solo versiones con al menos 7 días publicadas (14 para las mayores de npm).
 
 Para publicar una versión, sube la versión en `package.json`, haz commit y ejecuta `git tag v1.0.1 && git push --tags`.
 
