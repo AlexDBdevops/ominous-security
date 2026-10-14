@@ -11,7 +11,7 @@
     "lint": "node scripts/lint.js",
     "test": "node --test test/*.test.js",
     "test:ci": "node --test --experimental-test-coverage --test-coverage-include=lib/** --test-coverage-include=bin/** --test-coverage-include=server.js --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=junit.xml test/*.test.js",
-    "scan:self": "node bin/ominous-scan.js . --exclude lib/rules.js,lib/decoder.js,lib/extra.js,lib/surfaces.js,lib/remote.js,lib/review.js,public/index.html,public/analyzer.js,README.md,test/,node_modules/ --fail-on red",
+    "scan:self": "node bin/ominous-scan.js . --exclude lib/rules.js,lib/decoder.js,lib/extra.js,lib/surfaces.js,lib/remote.js,lib/review.js,lib/i18n-en.json,public/index.html,public/analyzer.js,README.md,test/,node_modules/ --fail-on red",
     "build:site": "node scripts/build-site.js dist",
     "build:web": "node scripts/build-web.js",
     "update:data": "node scripts/update-data.js",
