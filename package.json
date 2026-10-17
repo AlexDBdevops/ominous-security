@@ -31,7 +31,7 @@
   ],
   "optionalDependencies": {
     "@anthropic-ai/sdk": "0.133.0",
-    "@babel/parser": "7.29.9"
+    "@babel/parser": "8.0.6"
   },
   "repository": {
     "type": "git",
