@@ -8,64 +8,50 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { execFile } = require('child_process');
-const { Worker } = require('worker_threads');
+
+// Caché de OSV, EPSS y deps.dev en la carpeta temporal (en Docker, un volumen que sobrevive a
+// reinicios). Se fija antes de cargar los módulos: los hilos de análisis la heredan.
+//   OMINOUS_NET_CACHE=0  sin caché
+if (process.env.OMINOUS_NET_CACHE !== '0' && !process.env.OMINOUS_NET_CACHE_DIR) process.env.OMINOUS_NET_CACHE_DIR = path.join(os.tmpdir(), 'ominous-cache');
+require('./lib/gitsafe').cleanStaleTemp();
+try { require('./lib/netcache').prune(); } catch { /* sin caché */ }
 const { applyAutoFixes } = require('./lib/analyzer');
 const { summarizeDiff } = require('./lib/summary');
-const { scanHistory } = require('./lib/history');
-const { parseGitmodules } = require('./lib/extra');
-const { externalPass } = require('./lib/external');
 const { Watch } = require('./lib/watch');
 const ai = require('./lib/ai');
 const conn = require('./lib/connection');
-const { parseGithubUrl, repoMetaFrom, parseScorecard, releasePass, movedPass, scorecardCoverage } = require('./lib/github');
-const HISTORY_COMMITS = Number(process.env.HISTORY_COMMITS) || 300;
-const MAX_SUBMODULES = 8;
-const ANALYSIS_TIMEOUT = Number(process.env.ANALYSIS_TIMEOUT_MS) || 5 * 60 * 1000;
+const { parseGithubUrl, repoMetaFrom, parseScorecard } = require('./lib/github');
+const { git, gitPatched, checkGit } = require('./lib/gitsafe');
+const { scanRepo, ANALYSIS_TIMEOUT } = require('./lib/pipeline');
+const { remoteScan, checkScan } = require('./lib/scanclient');
+const { packTo, listTree } = require('./lib/tarpack');
+const { zipChunks } = require('./lib/zippack');
 const WATCH = process.env.OMINOUS_WATCH !== '0';
 const WATCH_HOURS = Number(process.env.OMINOUS_WATCH_HOURS) || 24;
-// Tiempo total para las fases previas al análisis (historial, submódulos, herramientas
-// externas). Pasado este tiempo se saltan, y la cobertura lo dice.
-const PREP_BUDGET = Number(process.env.OMINOUS_PREP_BUDGET_MS) || 12 * 60 * 1000;
-
-// Versiones de git con los fallos de clonado de 2025 corregidos (CVE-2025-48384 y otros):
-// 2.43.7, 2.44.4, 2.45.4, 2.46.4, 2.47.3, 2.48.2, 2.49.1 y 2.50.1 en adelante.
-const GIT_FIXED = { 43: 7, 44: 4, 45: 4, 46: 4, 47: 3, 48: 2, 49: 1, 50: 1 };
-let gitVersion = null;
-function gitPatched(v) {
-  const m = String(v).match(/(\d+)\.(\d+)\.(\d+)/);
-  if (!m) return null;
-  const [maj, min, patch] = m.slice(1).map(Number);
-  if (maj !== 2) return maj > 2;
-  if (min > 50) return true;
-  if (min < 43) return false;
-  return patch >= GIT_FIXED[min];
-}
-function gitVersionCoverage(extra) {
-  if (gitVersion && gitPatched(gitVersion) === false) extra.coverage.push({ label: 'Tu versión de git', status: 'partial', detail: `${gitVersion} tiene fallos conocidos que ejecutan código al clonar con submódulos (CVE-2025-48384). La herramienta clona sin submódulos, pero actualiza git antes de usar --recursive.` });
-}
-
-// Análisis en un hilo aparte con tiempo máximo.
-function runAnalysis(root, meta, log, extra) {
-  return new Promise((resolve, reject) => {
-    const w = new Worker(path.join(__dirname, 'lib', 'worker.js'), { workerData: { root, meta, extra } });
-    const timer = setTimeout(() => {
-      w.terminate();
-      reject(Object.assign(new Error(`El análisis superó ${Math.round(ANALYSIS_TIMEOUT / 60000)} minutos y se ha cortado. Puede ser un repo muy grande o un fichero diseñado para bloquear analizadores: trátalo como sospechoso.`), { status: 504 }));
-    }, ANALYSIS_TIMEOUT);
-    w.on('message', (m) => {
-      if (m.log) log(m.log);
-      else { clearTimeout(timer); w.terminate(); if (m.error) reject(new Error(m.error)); else resolve(m.result); }
-    });
-    w.on('error', (e) => { clearTimeout(timer); reject(e); });
-  });
-}
 
 const PORT = Number(process.env.PORT) || 8080;
 const HOST = process.env.HOST || '127.0.0.1';
 const CLONE_DIR = process.env.CLONE_DIR || path.join(os.homedir(), 'ominous-clones');
+// Con Docker, CLONE_DIR es /data dentro del contenedor; CLONE_DIR_HOST es esa carpeta vista desde
+// tu equipo (la pone compose): es la que se enseña, para que sepas dónde está el clon.
+const CLONE_DIR_HOST = process.env.CLONE_DIR_HOST || '';
+function shownPath(p) {
+  if (!CLONE_DIR_HOST || !p) return p;
+  const rel = path.relative(CLONE_DIR, p);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return p;
+  const sep = /^[A-Za-z]:[\\/]|\\/.test(CLONE_DIR_HOST) ? '\\' : '/';
+  return rel ? `${CLONE_DIR_HOST.replace(/[\\/]+$/, '')}${sep}${rel.split(path.sep).join(sep)}` : CLONE_DIR_HOST;
+}
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
-const NO_HOOKS = path.join(os.tmpdir(), 'ominous-no-hooks-dir');
+const SCANNER_URL = process.env.OMINOUS_SCANNER_URL || '';
+// Detrás de la pasarela (Docker): la IP real llega por PROXY protocol y solo se aceptan
+// conexiones de la pasarela o locales (lib/proxyproto.js).
+const PROXY_FROM = process.env.OMINOUS_PROXY_FROM || '';
+// El contenedor de análisis: si su IP llegara en una cabecera PROXY, se rechaza
+const PROXY_DENY = process.env.OMINOUS_PROXY_DENY || '';
+// Mensajes de error en el registro en una sola línea (pueden llevar texto del repo o de la petición)
+const oneLine = (m) => String(m).replace(/[\u0000-\u001f\u007f]/g, ' ');
+const clientIp = (req) => req.socket.clientAddress || req.socket.remoteAddress;
 const analyses = new Map(); // id -> { repo, commit, result, at }
 const watch = new Watch(CLONE_DIR);
 const MAX_ANALYSES = 50;
@@ -79,19 +65,6 @@ const allowedHosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:$
   ...String(process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)]);
 // Expuesta = acepta peticiones dirigidas a un nombre que no es de esta máquina.
 const EXPOSED = !!process.env.ALLOW_ANY_HOST || [...allowedHosts].some((h) => !LOOPBACK.test(h));
-
-// Git endurecido: sin hooks, sin submódulos, sin LFS, sin prompts, sin protocolo file://
-const GIT_SAFE = ['-c', `core.hooksPath=${NO_HOOKS}`, '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never', '-c', 'submodule.recurse=false', '-c', 'core.fsmonitor=false'];
-const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', GIT_ASKPASS: 'echo' };
-
-function git(args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    execFile('git', [...GIT_SAFE, ...args], { env: GIT_ENV, timeout: opts.timeout || 180000, maxBuffer: 8 * 1024 * 1024, cwd: opts.cwd || os.tmpdir() }, (err, stdout, stderr) => {
-      if (err) reject(new Error((stderr || err.message).trim().split('\n').slice(-2).join(' ')));
-      else resolve(stdout.trim());
-    });
-  });
-}
 
 
 async function gh(pathname) {
@@ -121,102 +94,32 @@ async function repoMeta(owner, repo) {
   return repoMetaFrom(r, u, sc, rel || []);
 }
 
-async function analyze(url) {
+// onLog recibe cada paso real del análisis (la página lo enseña como progreso).
+async function analyze(url, onLog = () => {}) {
   const ref = parseGithubUrl(url);
   if (!ref) throw Object.assign(new Error('URL no válida. Usa algo como https://github.com/usuario/repositorio'), { status: 400 });
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ominous-'));
-  const dir = path.join(tmp, 'repo');
-  try {
-    const meta0 = await repoMeta(ref.owner, ref.repo);
-    if (meta0 && meta0.size_kb > MAX_REPO_MB * 1024) {
-      throw Object.assign(new Error(`El repositorio ocupa ${Math.round(meta0.size_kb / 1024)} MB y el límite es ${MAX_REPO_MB} MB (MAX_REPO_MB).`), { status: 413 });
-    }
-    const metaP = Promise.resolve(meta0);
-    const args = ['clone', '--depth', '1', '--no-tags', '--single-branch', '--no-recurse-submodules'];
-    if (ref.branch) args.push('--branch', ref.branch);
-    args.push('--', ref.cloneUrl, dir);
-    try { await git(args); } catch (e) {
-      throw Object.assign(new Error(`No se pudo descargar el repositorio (¿existe y es público?). ${e.message}`), { status: 422 });
-    }
-    const commit = await git(['-C', dir, 'rev-parse', 'HEAD']);
-    const branch = ref.branch || await git(['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD']);
-    const meta = await metaP;
-    const log = (m) => console.log(`  [${ref.owner}/${ref.repo}] ${m}`);
-    const extra = { vulns: [], threats: [], coverage: [], ref: { owner: ref.owner, repo: ref.repo, commit } };
-    movedPass(ref, meta, extra);
-    scorecardCoverage(meta, extra);
-    const deadline = Date.now() + PREP_BUDGET;
-    const timed = async (label, fn) => {
-      if (Date.now() > deadline) { extra.coverage.push({ label, status: 'skip', detail: 'saltado: el análisis llevaba demasiado tiempo (OMINOUS_PREP_BUDGET_MS)' }); return; }
-      await fn();
-    };
-    gitVersionCoverage(extra);
-    await timed('Historial de git', () => historyPass(dir, extra, log));
-    await timed('Submódulos', () => submodulePass(fs.realpathSync.native(dir), tmp, ref, extra, log, deadline));
-    await timed('Herramientas externas', () => externalPass(fs.realpathSync.native(dir), tmp, extra, log));
-    releasePass(meta, extra);
-    const { aiContext, ...result } = await runAnalysis(fs.realpathSync.native(dir), meta, log, extra);
-    const id = crypto.randomUUID();
-    const payload = {
-      id, repo: { owner: ref.owner, name: ref.repo, branch, commit, url: `https://github.com/${ref.owner}/${ref.repo}`, meta }, ...result,
-      ai: { available: ai.available(), files: aiContext.docs.length, decoded: aiContext.decoded.length, chars: aiContext.chars },
-      analyzedAt: new Date().toISOString(),
-    };
-    analyses.set(id, { ref, commit, payload, aiContext, at: Date.now() });
-    for (const [k, v] of analyses) if (Date.now() - v.at > 6 * 3600e3 || analyses.size > MAX_ANALYSES) analyses.delete(k);
-    return payload;
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+  const until = Date.now() + ANALYSIS_TIMEOUT;
+  const log = (m) => { console.log(`  [${ref.owner}/${ref.repo}] ${m}`); onLog(m); };
+  log('Evaluando la reputación del autor y del repo (GitHub y OpenSSF Scorecard)…');
+  const meta = await repoMeta(ref.owner, ref.repo);
+  if (meta && meta.size_kb > MAX_REPO_MB * 1024) {
+    throw Object.assign(new Error(`El repositorio ocupa ${Math.round(meta.size_kb / 1024)} MB y el límite es ${MAX_REPO_MB} MB (MAX_REPO_MB).`), { status: 413 });
   }
+  // Con OMINOUS_SCANNER_URL (Docker), el repo se clona y se analiza en otro contenedor, sin tu
+  // carpeta de clones ni tus claves; lo que devuelve se comprueba antes de usarlo.
+  const scan = checkScan(SCANNER_URL ? await remoteScan(SCANNER_URL, { ref, meta, until, onLog: log }) : await scanRepo({ ref, meta, until, log }), ref);
+  log('Preparando el informe…');
+  const { aiContext, ...result } = scan.result;
+  const id = crypto.randomUUID();
+  const payload = {
+    id, repo: { owner: ref.owner, name: ref.repo, branch: scan.branch, commit: scan.commit, url: `https://github.com/${ref.owner}/${ref.repo}`, meta }, ...result,
+    ai: { available: ai.available(), files: aiContext.docs.length, decoded: aiContext.decoded.length, chars: aiContext.chars },
+    analyzedAt: new Date().toISOString(),
+  };
+  analyses.set(id, { ref: { ...ref, branch: scan.branch }, commit: scan.commit, payload, aiContext, at: Date.now() });
+  for (const [k, v] of analyses) if (Date.now() - v.at > 6 * 3600e3 || analyses.size > MAX_ANALYSES) analyses.delete(k);
+  return payload;
 }
-
-// Historial: amplía el clon superficial y busca secretos/malware en líneas borradas.
-async function historyPass(dir, extra, log) {
-  log(`Descargando historial (hasta ${HISTORY_COMMITS} commits)…`);
-  let deepened = true;
-  try { await git(['-C', dir, 'fetch', '--deepen', String(HISTORY_COMMITS - 1), '--no-tags', '--no-recurse-submodules', 'origin'], { timeout: 120000 }); } catch { deepened = false; }
-  const h = await scanHistory(GIT_SAFE, dir, { commits: HISTORY_COMMITS, env: GIT_ENV });
-  for (const f of h.findings) (f.kind === 'vuln' ? extra.vulns : extra.threats).push(f);
-  extra.coverage.push({
-    label: 'Historial de git', status: !deepened || h.truncated || h.error || h.scanned >= HISTORY_COMMITS ? 'partial' : 'ok',
-    detail: `${h.scanned} commit${h.scanned === 1 ? '' : 's'} revisado${h.scanned === 1 ? '' : 's'}${!deepened ? ' (no se pudo descargar más historial)' : ''}${h.truncated ? ' (límite de tamaño o tiempo alcanzado)' : ''}${h.scanned >= HISTORY_COMMITS ? ` (hay más commits antiguos sin revisar; HISTORY_COMMITS=${HISTORY_COMMITS})` : ''}`,
-  });
-}
-
-// Submódulos: comprueba a dónde apuntan y analiza los de GitHub en el commit exacto que fija el repo.
-async function submodulePass(root, tmp, ref, extra, log, deadline = Infinity) {
-  const subs = parseGitmodules(root);
-  if (!subs.length) return;
-  let analyzed = 0;
-  for (const sm of subs) {
-    let url = sm.url;
-    if (/^\.\.?\//.test(url)) url = new URL(url, `https://github.com/${ref.owner}/${ref.repo}/`).href;
-    const bad = /^(ext::|file:|\/|[a-z]:\\)/i.test(url) ? 'high' : /^http:\/\//i.test(url) ? 'medium' : null;
-    if (bad) { extra.threats.push({ kind: 'threat', rule: 'submodule-url', severity: bad, title: `Submódulo con URL peligrosa: ${sm.path}`, description: `Apunta a ${url}. Las URL ext::, file:// o http:// permiten ejecutar comandos o suplantar el contenido.`, file: '.gitmodules', line: null }); continue; }
-    const sub = parseGithubUrl(url.replace(/^git@github\.com:/, 'https://github.com/'));
-    if (!sub) { extra.threats.push({ kind: 'threat', rule: 'submodule-external', severity: 'low', title: `Submódulo fuera de GitHub: ${sm.path}`, description: `Apunta a ${url}. No se ha analizado.`, file: '.gitmodules', line: null }); continue; }
-    if (analyzed >= MAX_SUBMODULES || Date.now() > deadline) continue;
-    let sha = null;
-    try { const ls = await git(['-C', root, 'ls-tree', 'HEAD', '--', sm.path]); sha = (ls.match(/^160000 commit ([0-9a-f]{40})/) || [])[1] || null; } catch { /* sin gitlink */ }
-    const sdir = path.join(tmp, `sub${analyzed}`);
-    try {
-      log(`Analizando submódulo ${sm.path}…`);
-      await git(['init', '-q', sdir]);
-      await git(['-C', sdir, 'remote', 'add', 'origin', sub.cloneUrl]);
-      await git(['-C', sdir, 'fetch', '--depth', '1', '--no-tags', 'origin', sha || 'HEAD'], { timeout: 120000 });
-      await git(['-C', sdir, 'checkout', '-q', 'FETCH_HEAD']);
-      const r = await runAnalysis(fs.realpathSync.native(sdir), null, () => {}, {});
-      const pre = (f) => ({ ...f, file: f.file ? `${sm.path}/${f.file}` : sm.path, title: `${f.title} [submódulo]` });
-      extra.vulns.push(...r.vulnerabilities.map(pre));
-      extra.threats.push(...r.threats.map(pre));
-      analyzed++;
-    } catch (e) {
-      extra.threats.push({ kind: 'threat', rule: 'submodule-fail', severity: 'low', title: `No se pudo analizar el submódulo ${sm.path}`, description: e.message, file: '.gitmodules', line: null });
-    }
-  }
-  extra.coverage.push({ label: 'Submódulos', status: analyzed === subs.length ? 'ok' : 'partial', detail: `${analyzed} de ${subs.length} analizados${subs.length > MAX_SUBMODULES ? ` (máximo ${MAX_SUBMODULES})` : ''}` });
-}
-
 
 // El destino del clon queda dentro de CLONE_DIR: si se pudiera elegir cualquier
 // ruta, un clon en ~/.vim/pack/x/start, ~/.config/autostart o similares se
@@ -241,7 +144,8 @@ function assertInsideCloneDir(dir) {
   if (real !== base && !real.startsWith(base + path.sep)) throw Object.assign(new Error('El destino sale de la carpeta de clones (enlace simbólico).'), { status: 400 });
 }
 
-async function clone({ id, dest, acknowledged, applyFixes }) {
+// El análisis que se va a clonar; si no está en verde, hace falta la casilla de confirmación.
+function approvedAnalysis(id, acknowledged) {
   const a = analyses.get(id);
   if (!a) throw Object.assign(new Error('Análisis no encontrado o caducado. Vuelve a analizar el repositorio.'), { status: 404 });
   const aiRaised = !!(a.aiReview && a.aiReview.raises);
@@ -250,20 +154,14 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
       ? 'La revisión con IA ha encontrado problemas graves: marca la casilla de confirmación para clonar.'
       : 'El análisis no está en verde: marca la casilla de confirmación para clonar.'), { status: 409 });
   }
-  const target = resolveDest(dest, a.ref.repo);
-  // .ominous guarda la lista de vigilancia: un repo con ese nombre podría escribirla.
-  if (path.relative(path.resolve(CLONE_DIR), target).split(path.sep)[0] === '.ominous') throw Object.assign(new Error('Ese nombre de carpeta está reservado. Elige otro destino.'), { status: 400 });
-  if (fs.existsSync(target)) throw Object.assign(new Error(`La carpeta ya existe: ${target}`), { status: 409 });
-  // Se comprueba antes de crear nada: si no, un enlace dentro de otro clon crearía carpetas fuera.
-  fs.mkdirSync(CLONE_DIR, { recursive: true });
-  let existing = path.dirname(target);
-  while (!fs.existsSync(existing)) existing = path.dirname(existing);
-  assertInsideCloneDir(existing);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  assertInsideCloneDir(path.dirname(target));
-  // Solo la rama analizada y sin tocar el disco hasta fijar el commit analizado: así no llega
-  // a escribirse ni un fichero de otra rama o de un commit posterior al análisis.
-  const args = ['clone', '--no-recurse-submodules', '--single-branch', '--no-checkout', '--config', 'core.protectNTFS=true', '--config', 'core.protectHFS=true'];
+  return a;
+}
+
+// Clona en `target` el commit analizado (solo esa rama y sin escribir nada en disco hasta fijar
+// el commit: no llega ni un fichero de otra rama o de un commit posterior) y aplica los
+// arreglos si se piden. `config` añade opciones de git al clon.
+async function checkoutAnalyzed(a, target, applyFixes, config = []) {
+  const args = ['clone', '--no-recurse-submodules', '--single-branch', '--no-checkout', '--config', 'core.protectNTFS=true', '--config', 'core.protectHFS=true', ...config.flatMap((c) => ['--config', c])];
   if (a.ref.branch) args.push('--branch', a.ref.branch);
   args.push('--', a.ref.cloneUrl, target);
   await git(args, { timeout: 600000 });
@@ -279,6 +177,23 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
     diff = await git(['-C', target, 'diff', '--no-color', '--no-ext-diff', '-U3']);
     summary = await summarizeDiff({ diff, fixes, repo: `${a.ref.owner}/${a.ref.repo}` });
   }
+  return { commit: a.commit, pinnedToAnalyzedCommit: pinned, fixesApplied: fixes, diff: diff.slice(0, 400000), diffTruncated: diff.length > 400000, summary };
+}
+
+async function clone({ id, dest, acknowledged, applyFixes }) {
+  const a = approvedAnalysis(id, acknowledged);
+  const target = resolveDest(dest, a.ref.repo);
+  // .ominous guarda la lista de vigilancia: un repo con ese nombre podría escribirla.
+  if (path.relative(path.resolve(CLONE_DIR), target).split(path.sep)[0] === '.ominous') throw Object.assign(new Error('Ese nombre de carpeta está reservado. Elige otro destino.'), { status: 400 });
+  if (fs.existsSync(target)) throw Object.assign(new Error(`La carpeta ya existe: ${shownPath(target)}`), { status: 409 });
+  // Se comprueba antes de crear nada: si no, un enlace dentro de otro clon crearía carpetas fuera.
+  fs.mkdirSync(CLONE_DIR, { recursive: true });
+  let existing = path.dirname(target);
+  while (!fs.existsSync(existing)) existing = path.dirname(existing);
+  assertInsideCloneDir(existing);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  assertInsideCloneDir(path.dirname(target));
+  const r = await checkoutAnalyzed(a, target, applyFixes);
   a.clonedTo = target;
   if (WATCH) {
     try {
@@ -286,7 +201,64 @@ async function clone({ id, dest, acknowledged, applyFixes }) {
       watch.add({ owner: a.ref.owner, repo: a.ref.repo, commit: a.commit, dest: fs.realpathSync.native(target), findings: deps });
     } catch (e) { console.error(`✗ vigilancia: ${e.message}`); }
   }
-  return { path: target, commit: a.commit, pinnedToAnalyzedCommit: pinned, fixesApplied: fixes, diff: diff.slice(0, 400000), diffTruncated: diff.length > 400000, summary };
+  return { path: shownPath(target), ...r };
+}
+
+// ---------- Clonar en una carpeta que eliges en el navegador ----------
+// La app no escribe fuera de CLONE_DIR. Para clonar en cualquier carpeta de tu equipo, la app
+// prepara el clon en su carpeta temporal (commit analizado y arreglos aplicados) y la página lo
+// escribe en la carpeta que elijas, con el permiso que te pide el navegador. El clon lleva
+// core.symlinks=false y core.filemode=false: el navegador no crea enlaces ni permisos de
+// ejecución, y así git no los ve como cambios (es como clona git en un Windows sin enlaces).
+const exportsReady = new Map(); // token → { tmp, root, list, at }
+const EXPORT_TTL = 15 * 60e3;
+function dropExport(token) {
+  const e = exportsReady.get(token);
+  if (!e) return;
+  exportsReady.delete(token);
+  fs.rmSync(e.tmp, { recursive: true, force: true });
+}
+
+async function prepareExport({ id, acknowledged, applyFixes }) {
+  const a = approvedAnalysis(id, acknowledged);
+  if (exportsReady.size >= 4) throw Object.assign(new Error('Hay demasiados clones preparados sin descargar. Espera unos minutos.'), { status: 429 });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ominous-export-'));
+  try {
+    const root = path.join(tmp, 'repo');
+    const r = await checkoutAnalyzed(a, root, applyFixes, ['core.symlinks=false', 'core.filemode=false']);
+    const list = listTree(root);
+    const bytes = list.reduce((s, e) => s + (e.size || 0), 0);
+    if (bytes > MAX_REPO_MB * 2 * 1024 * 1024) throw Object.assign(new Error(`El clon ocupa ${Math.round(bytes / 1048576)} MB: demasiado para pasarlo por el navegador. Usa la carpeta de clones.`), { status: 413 });
+    const token = crypto.randomUUID();
+    exportsReady.set(token, { tmp, root, list, name: a.ref.repo, at: Date.now() });
+    setTimeout(() => dropExport(token), EXPORT_TTL).unref();
+    return { token, name: a.ref.repo, files: list.filter((e) => !e.dir).length, bytes, ...r };
+  } catch (e) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    throw e;
+  }
+}
+
+// Manda el clon preparado y lo borra. El token es de un solo uso.
+//  tar: para que la página lo escriba en la carpeta que elijas
+//  zip: para descargarlo y descomprimirlo donde quieras (cualquier navegador)
+async function sendExport(token, res, format) {
+  const e = exportsReady.get(token);
+  if (!e) return send(res, 404, { error: 'Clon preparado no encontrado o caducado. Vuelve a pulsar Clonar.' });
+  exportsReady.delete(token);
+  try {
+    if (format === 'zip') {
+      const name = /^[\w.-]{1,100}$/.test(e.name) && !/^\.+$/.test(e.name) ? e.name : 'repo';
+      res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/zip', 'content-disposition': `attachment; filename="${name}.zip"` });
+      const files = (function* files() { for (const x of e.list) if (!x.dir) yield { name: `${name}/${x.rel}`, data: fs.readFileSync(path.join(e.root, x.rel)) }; })();
+      for (const chunk of zipChunks(files)) if (!res.write(chunk)) await new Promise((r) => res.once('drain', r));
+      res.end();
+    } else {
+      res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/x-tar', 'x-ominous-bytes': String(e.list.reduce((s, x) => s + (x.size || 0), 0)) });
+      await packTo(e.root, res, e.list);
+      res.end();
+    }
+  } catch { res.destroy(); } finally { fs.rmSync(e.tmp, { recursive: true, force: true }); }
 }
 
 // Segunda opinión de Claude sobre los ficheros de más riesgo. Solo añade avisos.
@@ -362,7 +334,9 @@ const server = http.createServer(async (req, res) => {
   // Bloquea DNS rebinding y peticiones de otras webs (este servidor escribe en tu disco).
   if (!allowedHosts.has(String(req.headers.host)) && !process.env.ALLOW_ANY_HOST) return send(res, 403, { error: 'Host no permitido' });
   const origin = req.headers.origin;
-  if (req.method === 'POST' && origin && origin.replace(/^https?:\/\//, '') !== req.headers.host) return send(res, 403, { error: 'Origen no permitido' });
+  // Origen exacto, con su esquema: https solo detrás de un proxy con TLS (x-forwarded-proto).
+  const scheme = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+  if (req.method === 'POST' && origin && origin !== `${scheme}://${req.headers.host}`) return send(res, 403, { error: 'Origen no permitido' });
 
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (TOKEN && req.method === 'GET' && url.pathname === '/' && url.searchParams.has('token')) {
@@ -372,7 +346,7 @@ const server = http.createServer(async (req, res) => {
   }
   // La comprobación de salud no exige token (la usan Docker y los scripts), pero sin él no da detalles.
   if (req.method === 'GET' && url.pathname === '/api/health') {
-    return send(res, 200, { ok: true, mode: 'live', ...(tokenOk(req) ? { cloneDir: EXPOSED ? path.basename(CLONE_DIR) : CLONE_DIR, ai: ai.available(), aiConnection: conn.status() } : {}) });
+    return send(res, 200, { ok: true, mode: 'live', ...(tokenOk(req) ? { cloneDir: EXPOSED ? path.basename(CLONE_DIR_HOST || CLONE_DIR) : shownPath(CLONE_DIR), ai: ai.available(), aiConnection: conn.status() } : {}) });
   }
   if (!tokenOk(req)) {
     if (req.method === 'GET' && url.pathname === '/') return send(res, 401, '<!doctype html><meta charset="utf-8"><title>Ominous Security</title><p>Acceso protegido. Abre la URL con <code>?token=TU_TOKEN</code>.</p>', 'text/html; charset=utf-8');
@@ -396,12 +370,31 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/analyze') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
       const body = await readJson(req);
-      if (rateLimited(req.socket.remoteAddress)) return send(res, 429, { error: 'Demasiados análisis seguidos. Espera unos minutos.' });
+      if (rateLimited(clientIp(req))) return send(res, 429, { error: 'Demasiados análisis seguidos. Espera unos minutos.' });
       if (running >= MAX_CONCURRENT) return send(res, 503, { error: 'Ya hay análisis en curso. Inténtalo en un momento.' });
       console.log(`→ Analizando ${String(body.url).slice(0, 200)}`);
       running++;
+      // La página pide el progreso real: líneas JSON { log } y al final { result } o { error, status }
+      if (/application\/x-ndjson/.test(req.headers.accept || '')) {
+        res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/x-ndjson; charset=utf-8' });
+        const line = (o) => { if (!res.destroyed) res.write(`${JSON.stringify(o)}\n`); };
+        try { line({ result: await analyze(body.url, (m) => line({ log: String(m).slice(0, 300) })) }); } catch (e) {
+          console.error(`✗ ${oneLine(e.message)}`);
+          line({ error: e.status ? e.message : 'Error interno', status: e.status || 500 });
+        } finally { running--; res.end(); }
+        return;
+      }
       try { return send(res, 200, await analyze(body.url)); } finally { running--; }
     }
+    // Clonar en una carpeta elegida en el navegador: se prepara (POST) y se descarga una vez (GET)
+    if (req.method === 'POST' && url.pathname === '/api/export') {
+      if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
+      const body = await readJson(req);
+      if (rateLimited(clientIp(req))) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
+      return send(res, 200, await prepareExport(body));
+    }
+    const em = req.method === 'GET' && url.pathname.match(/^\/api\/export\/([0-9a-f-]{36})$/);
+    if (em) return sendExport(em[1], res, url.searchParams.get('formato'));
     if (req.method === 'POST' && url.pathname === '/api/clone') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
       const body = await readJson(req);
@@ -412,7 +405,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/ai-review') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
       const body = await readJson(req);
-      if (rateLimited(req.socket.remoteAddress)) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
+      if (rateLimited(clientIp(req))) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
       console.log('→ Revisión con IA');
       return send(res, 200, await reviewWithAi(body));
     }
@@ -420,7 +413,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/ai-connection') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
       const body = await readJson(req);
-      if (rateLimited(req.socket.remoteAddress)) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
+      if (rateLimited(clientIp(req))) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
       // La clave solo viaja desde este equipo o por HTTPS (detrás de un proxy con TLS).
       const secureChannel = !EXPOSED || req.headers['x-forwarded-proto'] === 'https';
       const r = body.verify ? await conn.verify() : await conn.configure(body, { secureChannel });
@@ -428,7 +421,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, r);
     }
     // Expuesta a la red: no se enseñan rutas completas del disco (como cloneDir en /api/health).
-    const watchView = (w) => (EXPOSED ? { ...w, repos: w.repos.map((r) => ({ ...r, dest: path.relative(CLONE_DIR, r.dest) })) } : w);
+    const watchView = (w) => ({ ...w, repos: w.repos.map((r) => ({ ...r, dest: EXPOSED ? path.relative(CLONE_DIR, r.dest) : shownPath(r.dest) })) });
     if (req.method === 'GET' && url.pathname === '/api/watch') return send(res, 200, { enabled: WATCH, hours: WATCH_HOURS, ...watchView(watch.list()) });
     if (req.method === 'POST' && /^\/api\/watch\/(check|forget|read)$/.test(url.pathname)) {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Se espera JSON' });
@@ -436,7 +429,7 @@ const server = http.createServer(async (req, res) => {
       if (!WATCH) return send(res, 409, { error: 'La vigilancia está desactivada (OMINOUS_WATCH=0).' });
       if (url.pathname.endsWith('/forget')) return send(res, 200, watch.forget(String(body.id || '')));
       if (url.pathname.endsWith('/read')) { watch.markRead(); return send(res, 200, watchView(watch.list())); }
-      if (rateLimited(req.socket.remoteAddress)) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
+      if (rateLimited(clientIp(req))) return send(res, 429, { error: 'Demasiadas peticiones seguidas. Espera unos minutos.' });
       console.log('→ Comprobando los clones vigilados');
       return send(res, 200, watchView(await watch.check((m) => console.log(`  ${m}`))));
     }
@@ -446,11 +439,11 @@ const server = http.createServer(async (req, res) => {
     }
     send(res, 404, { error: 'No encontrado' });
   } catch (e) {
-    console.error(`✗ ${e.message}`);
+    console.error(`✗ ${oneLine(e.message)}`);
     if (!res.headersSent) send(res, e.status || 500, { error: e.status ? e.message : 'Error interno' });
   }
 });
-// El análisis puede durar hasta ANALYSIS_TIMEOUT; las cabeceras, poco.
+// El análisis entero puede durar hasta ANALYSIS_TIMEOUT; las cabeceras, poco.
 server.requestTimeout = ANALYSIS_TIMEOUT + 60000;
 server.headersTimeout = 15000;
 
@@ -461,14 +454,11 @@ if (require.main === module) {
     process.exit(1);
   }
   fs.mkdirSync(CLONE_DIR, { recursive: true });
-  server.listen(PORT, HOST, () => {
+  (PROXY_FROM ? require('./lib/proxyproto').proxyServer(server, PROXY_FROM, PROXY_DENY) : server).listen(PORT, HOST, () => {
     console.log(`\n  Ominous Security escuchando en http://localhost:${PORT}`);
     console.log(`  Los clones se guardan en ${CLONE_DIR}\n`);
   });
-  git(['--version']).then((v) => {
-    gitVersion = v.replace(/^git version\s*/, '');
-    if (gitPatched(gitVersion) === false) console.warn(`  ⚠ git ${gitVersion} tiene fallos conocidos al clonar con submódulos (CVE-2025-48384): actualízalo.\n`);
-  }).catch(() => console.warn('  ⚠ No encuentro git: no se podrá analizar ni clonar.\n'));
+  checkGit();
   if (WATCH) {
     // Vigilancia de los clones: al poco de arrancar y luego cada WATCH_HOURS horas.
     const tick = () => watch.check((m) => console.log(`  ${m}`)).catch((e) => console.error(`✗ vigilancia: ${e.message}`));

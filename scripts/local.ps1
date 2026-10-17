@@ -1,6 +1,7 @@
 # Construye y arranca Ominous Security en http://localhost:8080 (Windows / PowerShell)
 #
 #   .\scripts\local.ps1            construye la imagen y la arranca con Docker Desktop
+#   .\scripts\local.ps1 full       igual, con Gitleaks, Semgrep, Trivy y CodeQL (imagen más grande)
 #   .\scripts\local.ps1 down       la para
 #   .\scripts\local.ps1 logs       muestra los logs
 #   .\scripts\local.ps1 rebuild    reconstruye desde cero y arranca
@@ -27,16 +28,18 @@ function Wait-Ready {
 }
 
 switch ($Command) {
-  'up'      { New-Item -ItemType Directory -Force $env:OMINOUS_CLONES | Out-Null; docker compose up -d --build; Wait-Ready; Start-Process $url }
+  'up'      { New-Item -ItemType Directory -Force $env:OMINOUS_CLONES | Out-Null; docker compose up -d --build --force-recreate; Wait-Ready; Start-Process $url }
+  'full'    { New-Item -ItemType Directory -Force $env:OMINOUS_CLONES | Out-Null; docker compose -f compose.yaml -f compose.full.yaml up -d --build --force-recreate; Wait-Ready; Start-Process $url }
   'rebuild' { New-Item -ItemType Directory -Force $env:OMINOUS_CLONES | Out-Null; docker compose build --no-cache --pull; docker compose up -d --force-recreate; Wait-Ready }
   'down'    { docker compose down }
   'logs'    { docker compose logs -f app }
   'node'    {
-    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'No encuentro Node.js 18 o superior (https://nodejs.org).' }
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'No encuentro Node.js 22 o superior (https://nodejs.org).' }
+    if ([int](node -p "process.versions.node.split('.')[0]") -lt 22) { throw 'Necesitas Node.js 22 o superior.' }
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'No encuentro git.' }
     if (-not (Test-Path node_modules)) { npm ci --omit=dev --ignore-scripts }
     $env:PORT = $env:OMINOUS_PORT; $env:CLONE_DIR = $env:OMINOUS_CLONES
     node server.js
   }
-  default   { Get-Content $PSCommandPath -TotalCount 7 | Select-Object -Skip 1; exit 1 }
+  default   { Get-Content $PSCommandPath -TotalCount 8 | Select-Object -Skip 1; exit 1 }
 }

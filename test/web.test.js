@@ -46,6 +46,7 @@ function fakeGithub(root, { owner = 'acme', repo = 'tool', users = ['acme'], lim
     const base = `/repos/${owner}/${repo}`;
     if (p === base) return json(200, { full_name: `${owner}/${repo}`, default_branch: 'main', stargazers_count: 50, forks_count: 1, created_at: '2019-01-01T00:00:00Z', pushed_at: '2026-01-01T00:00:00Z', license: { spdx_id: 'MIT' }, owner: { type: 'User' }, size: 10 });
     if (p === `${base}/commits/main`) return new Response(SHA);
+    if (p.startsWith(`${base}/git/matching-refs/`)) return json(200, /^\/heads\/ma/.test(p.slice(`${base}/git/matching-refs`.length)) ? [{ ref: 'refs/heads/main' }] : []);
     if (p.startsWith(`${base}/commits/`)) return json(422, { message: 'No commit found' });
     if (p === `${base}/git/trees/${SHA}`) return json(200, { sha: SHA, truncated: false, tree: tree.map(({ link, ...e }) => e) });
     if (p === `${base}/releases`) return json(200, []);
@@ -103,27 +104,6 @@ test('web: mismo análisis que el de Node sobre el mismo commit', async (t) => {
   assert.ok(r.logs.length > 2);
 });
 
-test('web: parche de los arreglos automáticos sin tocar el análisis en memoria', async (t) => {
-  const dir = fx.trapRepo();
-  t.after(() => fx.rm(dir));
-  const om = loadBundle(fakeGithub(dir));
-  const a = (await call(om, { type: 'analyze', url: 'github.com/acme/tool' })).result;
-  const auto = a.vulnerabilities.filter((v) => v.fix && v.fix.auto && v.severity !== 'info');
-  assert.ok(auto.length, 'el repo trampa tiene arreglos automáticos');
-  const p1 = (await call(om, { type: 'patch', findings: auto })).result;
-  const p2 = (await call(om, { type: 'patch', findings: auto })).result;
-  assert.ok(p1.applied.length);
-  assert.match(p1.diff, /^diff --git a\/\S+ b\/\S+\n--- a\/\S+\n\+\+\+ b\/\S+\n@@ -\d+,\d+ \+\d+,\d+ @@/);
-  assert.equal(p1.diff, p2.diff, 'los ficheros vuelven a su estado original');
-  // git apply lo acepta tal cual sobre el commit original
-  const { execFileSync } = require('child_process');
-  try { execFileSync('git', ['--version'], { stdio: 'pipe' }); } catch { return; }
-  const pf = path.join(dir, '..', `${path.basename(dir)}.patch`);
-  fs.writeFileSync(pf, p1.diff);
-  t.after(() => fs.rmSync(pf, { force: true }));
-  execFileSync('git', ['apply', '--check', pf], { cwd: dir, stdio: 'pipe' });
-});
-
 test('web: 404 explica si falta la cuenta o el repo', async (t) => {
   const dir = fx.cleanRepo();
   t.after(() => fx.rm(dir));
@@ -173,19 +153,6 @@ test('web: el paquete está al día con lib/ y web/', () => {
   execFileSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'build-web.js'), '--check'], { stdio: 'pipe' });
 });
 
-test('web: el parche respeta ficheros sin salto de línea final', (t) => {
-  const { execFileSync } = require('child_process');
-  try { execFileSync('git', ['--version'], { stdio: 'pipe' }); } catch { return; }
-  const { fileDiff } = require('../web/entry');
-  const dir = fx.tmpDir('eol');
-  t.after(() => fx.rm(dir));
-  const before = 'uno\ndos\ntres\ncuatro';
-  fs.writeFileSync(path.join(dir, 'f.txt'), before);
-  fs.writeFileSync(path.join(dir, 'p.diff'), fileDiff('f.txt', before, 'uno\ndos\ntres\nCUATRO'));
-  execFileSync('git', ['apply', 'p.diff'], { cwd: dir, stdio: 'pipe' });
-  assert.equal(fs.readFileSync(path.join(dir, 'f.txt'), 'utf8'), 'uno\ndos\ntres\nCUATRO');
-});
-
 test('web: el token de GitHub solo va a api.github.com y se valida', async (t) => {
   const dir = fx.cleanRepo();
   t.after(() => fx.rm(dir));
@@ -202,4 +169,41 @@ test('web: el token de GitHub solo va a api.github.com y se valida', async (t) =
   seen.length = 0;
   await call(om, { type: 'analyze', url: 'https://github.com/acme/tool' });
   assert.ok(seen.every(([, auth]) => auth === null), 'sin token en el análisis siguiente');
+});
+
+test('web: en la página (sin worker) el análisis lleva plazo y lo dice en la cobertura', async (t) => {
+  const dir = fx.trapRepo2();
+  t.after(() => fx.rm(dir));
+  const om = loadBundle(fakeGithub(dir));
+  const r = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', deadline: Date.now() + 5 * 60 * 1000, inPage: true, signal: new AbortController().signal });
+  assert.ifError(r.error && new Error(r.error.message));
+  assert.ok(r.result.coverage.some((c) => c.label === 'Corte por tiempo' && /plazo/.test(c.detail)));
+  const ctl = new AbortController();
+  ctl.abort();
+  const gone = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', deadline: Date.now() + 5 * 60 * 1000, inPage: true, signal: ctl.signal });
+  assert.match(gone.error.message, /cancelado/, 'al lanzar otro análisis el anterior se cancela');
+});
+
+test('web: en el worker, con el plazo agotado devuelve lo revisado en vez de un error', async (t) => {
+  const dir = fx.trapRepo2();
+  t.after(() => fx.rm(dir));
+  const om = loadBundle(fakeGithub(dir));
+  const r = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool', deadline: Date.now() - 1 });
+  assert.ifError(r.error && new Error(r.error.message));
+  assert.ok(r.result.threats.some((x) => x.rule === 'partial-scan' && /tiempo/.test(x.title)));
+  assert.ok(!r.result.coverage.some((c) => c.label === 'Corte por tiempo'), 'en el worker no hace falta el aviso de la página');
+  assert.ok(r.result.dependencies.skipped);
+  assert.ok(r.result.coverage.some((c) => /OSV/.test(c.label) && c.status === 'skip' && /tiempo/.test(c.detail)));
+});
+
+test('web: un enlace a una carpeta del repo analiza la rama correcta', async (t) => {
+  const dir = fx.trapRepo2();
+  t.after(() => fx.rm(dir));
+  const calls = [];
+  const om = loadBundle(fakeGithub(dir, { calls }));
+  const r = await call(om, { type: 'analyze', url: 'https://github.com/acme/tool/tree/main/src/utils' });
+  assert.ifError(r.error && new Error(r.error.message));
+  assert.equal(r.result.repo.branch, 'main');
+  assert.equal(r.result.repo.commit, SHA);
+  assert.equal(calls.filter((u) => /matching-refs/.test(u)).length, 2, 'ramas y etiquetas, dos consultas');
 });

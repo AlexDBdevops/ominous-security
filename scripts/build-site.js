@@ -38,7 +38,11 @@ if (fs.existsSync(out) && fs.readdirSync(out).length && !fs.existsSync(path.join
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(path.join(out, 'fonts'), { recursive: true });
 fs.writeFileSync(path.join(out, MARK), '');
-fs.writeFileSync(path.join(out, 'index.html'), site(ed).html);
+// GitHub Pages sirve los ficheros con caché de 10 minutos: tras publicar, un navegador podría
+// juntar la página nueva con el analyzer.js viejo. Con su hash en la URL, cada versión pide el suyo.
+const v = require('crypto').createHash('sha256').update(fs.readFileSync(path.join(page.PUBLIC, 'analyzer.js'))).digest('hex').slice(0, 12);
+const bust = (s) => s.replace('<script src="analyzer.js">', `<script src="analyzer.js?v=${v}">`).replace("new Worker('analyzer.js')", `new Worker('analyzer.js?v=${v}')`);
+fs.writeFileSync(path.join(out, 'index.html'), site({ ...ed, body: bust(ed.body), html: bust(ed.html) }).html);
 fs.copyFileSync(path.join(page.PUBLIC, 'analyzer.js'), path.join(out, 'analyzer.js'));
 for (const f of fs.readdirSync(path.join(page.PUBLIC, 'fonts'))) {
   fs.copyFileSync(path.join(page.PUBLIC, 'fonts', f), path.join(out, 'fonts', f));

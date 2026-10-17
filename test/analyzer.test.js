@@ -98,3 +98,35 @@ test('applyAutoFixes cambia solo las líneas marcadas', async (t) => {
   assert.equal(after.split('\n').length, before.split('\n').length);
   for (const f of applied) assert.ok(f.file && f.line && f.before !== f.after);
 });
+
+// Sin enlaces simbólicos: en Windows crearlos pide permisos de administrador.
+const YAML_APP = { 'app.py': 'import yaml; conf = yaml.load(open("c.yml"))' };
+
+test('con plazo agotado para entre ficheros y lo marca como análisis incompleto', async (t) => {
+  const dir = fx.write(fx.tmpDir('plazo'), YAML_APP);
+  t.after(() => fx.rm(dir));
+  const r = await analyzeTree(dir, {}, () => {}, { deadline: Date.now() - 1 });
+  const partial = r.threats.find((x) => x.rule === 'partial-scan');
+  assert.ok(partial && /tiempo/.test(partial.title), 'avisa de que se acabó el tiempo');
+  assert.ok(!r.vulnerabilities.some((x) => x.file === 'app.py'), 'no ha leído el código');
+  assert.ok((await analyzeTree(dir, {})).vulnerabilities.some((x) => x.rule === 'py-yaml'), 'sin plazo sí lo encuentra');
+  const code = r.coverage.find((c) => c.label === 'Código del último commit');
+  assert.equal(code.status, 'partial');
+  assert.match(code.detail, /^0 ficheros leídos/);
+  // Tres comprobaciones que releen ficheros, dependencias y paquete publicado
+  assert.equal(r.coverage.filter((c) => c.status === 'skip' && /se acabó el tiempo/.test(c.detail)).length, 5);
+  assert.ok(r.dependencies.skipped, 'la web dice "sin revisar", no "sin ficheros de dependencias"');
+  assert.notEqual(r.summary.overall, 'green');
+});
+
+test('con plazo holgado da lo mismo que sin plazo, y se puede cancelar', async (t) => {
+  const dir = fx.write(fx.tmpDir('plazo'), YAML_APP);
+  t.after(() => fx.rm(dir));
+  const key = (d) => [...d.vulnerabilities, ...d.threats].map((f) => `${f.rule}:${f.file}:${f.line}`).sort();
+  const free = await analyzeTree(dir, {});
+  const timed = await analyzeTree(dir, {}, () => {}, { deadline: Date.now() + 60000 });
+  assert.deepEqual(key(timed), key(free));
+  const ctl = new AbortController();
+  ctl.abort();
+  await assert.rejects(analyzeTree(dir, {}, () => {}, { signal: ctl.signal }), /cancelado/);
+});

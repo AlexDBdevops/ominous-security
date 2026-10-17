@@ -5,6 +5,23 @@
 #   OMINOUS_PORT    puerto en tu máquina (por defecto 8080)
 #   OMINOUS_CLONES  carpeta de tu máquina donde quedan los clones (por defecto ./clones)
 #   OMINOUS_UID/GID usuario con el que corre el contenedor (el tuyo, para que los clones sean tuyos)
+#
+# Red: la app vive en una red interna sin salida a ninguna parte. La única conexión con el
+# exterior es la pasarela (lib/gateway.js): reenvía lo que abres en el navegador y hace de
+# proxy de salida que solo deja pasar HTTPS hacia direcciones públicas. Ni tu equipo, ni tu
+# red local, ni el servicio de metadatos de la nube son alcanzables desde la app.
+#
+# Análisis aparte: el repo ajeno se clona y se analiza en el contenedor "scanner"
+# (lib/scanner.js), con otro usuario, sin tu carpeta de clones y sin GITHUB_TOKEN ni
+# ANTHROPIC_API_KEY. Si un repo explotara un fallo de git o de una herramienta, se quedaría
+# ahí: la app comprueba lo que le devuelve y solo acepta conexiones de la pasarela.
+#
+# Redes (todas internas salvo "salida"):
+#   entrada         gateway ↔ app: lo que abres en el navegador y la salida de la app
+#   escaneo         app → scanner: la app le pide los análisis (puerto 8090)
+#   escaneo-salida  scanner → salida-scanner: la salida a Internet del scanner
+# El scanner no comparte red con la pasarela de entrada: no tiene ningún camino hasta la
+# página ni hasta la API de la app (que podría clonar en tu carpeta o gastar tus claves).
 
 name: ominous-security
 
@@ -14,16 +31,26 @@ services:
     image: ominous-security:local
     restart: unless-stopped
     user: "${OMINOUS_UID:-1000}:${OMINOUS_GID:-1000}"
-    ports:
-      # Solo en 127.0.0.1: nadie de tu red puede usarla para escribir en tu disco.
-      - "127.0.0.1:${OMINOUS_PORT:-8080}:8080"
+    networks: [entrada, escaneo]
     environment:
       HOME: /tmp
       CLONE_DIR: /data
+      # La misma carpeta vista desde tu equipo: es la que enseña la página
+      CLONE_DIR_HOST: "${OMINOUS_CLONES:-./clones}"
       ALLOWED_HOSTS: "localhost:${OMINOUS_PORT:-8080},127.0.0.1:${OMINOUS_PORT:-8080}"
       GITHUB_TOKEN:          # se toma de tu entorno o de .env si existe
       ANTHROPIC_API_KEY:
       MAX_REPO_MB: ${MAX_REPO_MB:-1024}
+      # Todo el tráfico de salida (app, git, Semgrep, Trivy) pasa por la pasarela
+      HTTPS_PROXY: http://gateway:3128
+      HTTP_PROXY: http://gateway:3128
+      # El scanner está en la red "escaneo": la app le habla directamente
+      NO_PROXY: scanner
+      NODE_USE_ENV_PROXY: "1"
+      OMINOUS_SCANNER_URL: http://scanner:8090
+      # Entrada solo desde la pasarela (PROXY protocol, con la IP real de quien se conecta)
+      OMINOUS_PROXY_FROM: gateway
+      OMINOUS_PROXY_DENY: scanner
     volumes:
       - "${OMINOUS_CLONES:-./clones}:/data"
       - ominous-tmp:/tmp
@@ -36,5 +63,87 @@ services:
     pids_limit: 256
     cpus: 2
 
+  gateway:
+    build: .
+    image: ominous-security:local
+    restart: unless-stopped
+    command: ["node", "lib/gateway.js"]
+    user: "65534:65534"
+    networks: [entrada, salida]
+    ports:
+      # Solo en 127.0.0.1: nadie de tu red puede usarla para escribir en tu disco.
+      - "127.0.0.1:${OMINOUS_PORT:-8080}:8080"
+    environment:
+      GATEWAY_APP: app:8080
+      GATEWAY_PROXY_PROTOCOL: "1"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    pids_limit: 32
+    cpus: 0.5
+    # El healthcheck de la imagen pregunta a la app a través de la propia pasarela
+    depends_on: [app]
+
+  scanner:
+    build: .
+    image: ominous-security:local
+    restart: unless-stopped
+    command: ["node", "lib/scanner.js"]
+    # Otro usuario que la app: no puede leer sus procesos ni sus ficheros
+    user: "${OMINOUS_SCANNER_UID:-1001}:${OMINOUS_SCANNER_UID:-1001}"
+    networks: [escaneo, escaneo-salida]
+    environment:
+      HOME: /tmp
+      MAX_REPO_MB: ${MAX_REPO_MB:-1024}
+      HTTPS_PROXY: http://salida-scanner:3128
+      HTTP_PROXY: http://salida-scanner:3128
+      NO_PROXY: ""
+      NODE_USE_ENV_PROXY: "1"
+    # Sin la carpeta de clones ni las claves: solo su propia carpeta temporal
+    volumes:
+      - scanner-tmp:/tmp
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    pids_limit: 256
+    cpus: 2
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get({ host: '127.0.0.1', port: 8090, path: '/health', agent: false }, (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+
+  # Salida a Internet del scanner: la misma pasarela, sin entrada (GATEWAY_PORT=0)
+  salida-scanner:
+    build: .
+    image: ominous-security:local
+    restart: unless-stopped
+    command: ["node", "lib/gateway.js"]
+    user: "65534:65534"
+    networks: [escaneo-salida, salida]
+    environment:
+      GATEWAY_PORT: "0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    pids_limit: 32
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3128, '127.0.0.1').on('connect', () => process.exit(0)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+
+networks:
+  entrada:
+    internal: true
+  escaneo:
+    internal: true
+  escaneo-salida:
+    internal: true
+  salida: {}
+
 volumes:
   ominous-tmp:
+  scanner-tmp:

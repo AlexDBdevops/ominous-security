@@ -20,11 +20,26 @@ test('el destino del clon no puede salir de CLONE_DIR', () => {
 });
 
 test('parseGithubUrl acepta formatos válidos', () => {
-  for (const u of ['https://github.com/expressjs/express', 'github.com/expressjs/express', 'git@github.com:expressjs/express.git', 'https://github.com/expressjs/express/tree/master']) {
+  for (const u of ['https://github.com/expressjs/express', 'github.com/expressjs/express', 'git@github.com:expressjs/express.git', 'https://github.com/expressjs/express/tree/master',
+    '  https://github.com/expressjs/express/  ', 'www.github.com/expressjs/express', 'https://github.com/expressjs/express?tab=readme-ov-file#readme', 'expressjs/express',
+    'https://github.com/expressjs/express/blob/master/lib/express.js']) {
     const r = parseGithubUrl(u);
     assert.equal(r.owner, 'expressjs', u);
     assert.equal(r.repo, 'express', u);
   }
+  assert.equal(parseGithubUrl('carpeta/otra', { short: false }), null, 'en submódulos "a/b" es una ruta, no un repo');
+});
+
+test('enlace a una carpeta: se elige la rama más larga que exista', async () => {
+  const { resolveBranch } = require('../lib/github');
+  const ref = parseGithubUrl('https://github.com/nodejs/node/tree/v22.x/lib/internal');
+  assert.deepEqual(ref.branchCandidates, ['v22.x/lib/internal', 'v22.x/lib', 'v22.x']);
+  assert.equal((await resolveBranch(ref, async () => ['main', 'v22.x', 'v22.x-staging'])).branch, 'v22.x');
+  assert.equal((await resolveBranch(ref, async () => ['v22.x', 'v22.x/lib'])).branch, 'v22.x/lib', 'ramas con "/"');
+  assert.equal((await resolveBranch(ref, async () => { throw new Error('sin red'); })).branch, 'v22.x/lib/internal', 'sin poder comprobarlo se deja como estaba');
+  const file = parseGithubUrl('https://github.com/a/b/blob/main/src/mi%20fichero.py');
+  assert.deepEqual(file.branchCandidates, ['main/src', 'main'], 'los tramos con caracteres raros no son candidatos');
+  assert.equal(parseGithubUrl('https://github.com/a/b/tree/main').branchCandidates.length, 1);
 });
 
 test('parseGithubUrl rechaza URLs peligrosas o ajenas', () => {
@@ -116,10 +131,19 @@ test('servidor HTTP', async (t) => {
   await t.test('bloquea peticiones desde otras webs (Origin)', async () => {
     const r = await req('POST', '/api/analyze', { ...host, origin: 'https://evil.example', 'content-type': 'application/json' }, '{}');
     assert.equal(r.status, 403);
+    // Mismo host con otro esquema u Origin "null" (iframe con sandbox): tampoco
+    assert.equal((await req('POST', '/api/watch/forget', { ...host, origin: `https://${host.host}`, 'content-type': 'application/json' }, '{"id":"x"}')).status, 403);
+    assert.equal((await req('POST', '/api/watch/forget', { ...host, origin: 'null', 'content-type': 'application/json' }, '{"id":"x"}')).status, 403);
   });
   await t.test('exige JSON', async () => {
     const r = await req('POST', '/api/analyze', { ...host, 'content-type': 'text/plain' }, 'url=x');
     assert.equal(r.status, 415);
+  });
+  await t.test('clonar en una carpeta elegida: sin análisis o con un token inventado no hay nada', async () => {
+    assert.equal((await req('POST', '/api/export', { ...host, 'content-type': 'application/json' }, JSON.stringify({ id: 'nope' }))).status, 404);
+    assert.equal((await req('GET', '/api/export/00000000-0000-0000-0000-000000000000', host)).status, 404);
+    assert.equal((await req('GET', '/api/export/..%2f..%2fetc%2fpasswd', host)).status, 404);
+    assert.equal((await req('POST', '/api/export', { ...host, origin: 'https://evil.example', 'content-type': 'application/json' }, '{}')).status, 403);
   });
   await t.test('clonar sin análisis previo falla', async () => {
     const r = await req('POST', '/api/clone', { ...host, 'content-type': 'application/json' }, JSON.stringify({ id: 'nope' }));

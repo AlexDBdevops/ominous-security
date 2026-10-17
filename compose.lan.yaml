@@ -3,11 +3,13 @@
 #   OMINOUS_LAN_IP=192.168.1.20 OMINOUS_TOKEN=$(openssl rand -hex 24) \
 #     docker compose -f compose.yaml -f compose.lan.yaml up -d
 # Sin OMINOUS_TOKEN la app se niega a arrancar en este modo.
+# El puerto lo publica la pasarela; la app sigue en la red interna sin salida directa.
 
 services:
-  app:
+  gateway:
     ports: !override
       - "${OMINOUS_PORT:-8080}:8080"
+  app:
     environment:
       ALLOWED_HOSTS: "localhost:${OMINOUS_PORT:-8080},127.0.0.1:${OMINOUS_PORT:-8080},${OMINOUS_LAN_IP:?Define OMINOUS_LAN_IP}:${OMINOUS_PORT:-8080}"
       OMINOUS_TOKEN: ${OMINOUS_TOKEN:?Define OMINOUS_TOKEN}

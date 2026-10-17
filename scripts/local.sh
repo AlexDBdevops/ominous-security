@@ -2,6 +2,7 @@
 # Construye y arranca Ominous Security en http://localhost:8080
 #
 #   scripts/local.sh            construye la imagen y la arranca con Docker (por defecto)
+#   scripts/local.sh full       igual, con Gitleaks, Semgrep, Trivy y CodeQL (imagen más grande)
 #   scripts/local.sh down       la para
 #   scripts/local.sh logs       muestra los logs
 #   scripts/local.sh rebuild    reconstruye desde cero (sin caché) y arranca
@@ -45,6 +46,11 @@ case "${1:-up}" in
     mkdir -p "$OMINOUS_CLONES"
     docker compose -f compose.yaml up -d --build --force-recreate
     wait_ready && open_browser ;;
+  full)
+    need_docker
+    mkdir -p "$OMINOUS_CLONES"
+    docker compose -f compose.yaml -f compose.full.yaml up -d --build --force-recreate
+    wait_ready && open_browser ;;
   rebuild)
     need_docker
     mkdir -p "$OMINOUS_CLONES"
@@ -61,8 +67,8 @@ case "${1:-up}" in
     docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges --network none \
       -e OMINOUS_OFFLINE=1 -v "$dir:/src:ro" --entrypoint ominous-scan ominous-security:local /src "$@" ;;
   node)
-    command -v node >/dev/null || die "No encuentro Node.js 18 o superior (https://nodejs.org)."
-    [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 18 ] || die "Necesitas Node.js 18 o superior."
+    command -v node >/dev/null || die "No encuentro Node.js 22 o superior (https://nodejs.org)."
+    [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 22 ] || die "Necesitas Node.js 22 o superior."
     command -v git >/dev/null || die "No encuentro git."
     [ -d node_modules ] || npm ci --omit=dev --ignore-scripts || echo "  (sin SDK de Anthropic: el resumen del diff será local)"
     PORT="$OMINOUS_PORT" CLONE_DIR="$OMINOUS_CLONES" exec node server.js ;;
@@ -81,5 +87,5 @@ case "${1:-up}" in
     echo "  Desde otro dispositivo de tu red abre (solo la primera vez, luego basta sin token):"
     echo "  http://${ip}:${OMINOUS_PORT}/?token=${OMINOUS_TOKEN}"
     echo "  Ojo: es HTTP sin cifrar. Úsalo solo en una red de confianza y vuelve a 'scripts/local.sh up' al terminar." ;;
-  *) sed -n '2,13p' "$0"; exit 1 ;;
+  *) sed -n '2,14p' "$0"; exit 1 ;;
 esac

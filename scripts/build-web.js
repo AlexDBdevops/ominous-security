@@ -24,7 +24,7 @@ async function build() {
     legalComments: 'eof',
     alias: { fs: shim('fs'), zlib: shim('zlib'), crypto: shim('crypto'), path: 'path-browserify', buffer: 'buffer' },
     inject: [shim('globals')],
-    external: ['@anthropic-ai/sdk', 'os', 'child_process', 'worker_threads', 'readline'],
+    external: ['@anthropic-ai/sdk', 'os', 'child_process', 'worker_threads', 'readline', 'https', 'dns', 'net'],
     plugins: [{
       name: 'connection-stub',
       setup(b) { b.onResolve({ filter: /^\.\/connection$/ }, () => ({ path: shim('connection') })); },

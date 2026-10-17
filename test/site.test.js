@@ -24,6 +24,8 @@ test('la demo estática lleva la CSP en un meta con hashes, las fuentes y ningú
   assert.match(html, /<style id="antiframe">html\{display:none!important\}<\/style>/, 'oculta la página dentro de marcos ajenos');
   assert.match(html, /<meta name="referrer" content="no-referrer">/);
   assert.ok(!/<(link|script|img|iframe)[^>]+(href|src)="https?:/i.test(html), 'sin recursos externos');
+  // El analizador lleva su hash en la URL (script y worker): tras publicar no se mezcla con uno viejo
+  assert.equal((html.match(/analyzer\.js\?v=[0-9a-f]{12}/g) || []).length, 2);
   assert.match(html, /const EDITION = 'web';/);
   assert.ok(fs.existsSync(path.join(out, 'analyzer.js')), 'lleva el analizador');
   const connect = csp.match(/connect-src ([^;]+)/)[1].trim().split(/\s+/).sort();
@@ -55,4 +57,10 @@ test('ediciones: la local no conecta fuera y la marca de edición existe', () =>
   assert.ok(!/worker-src/.test(page.CSP));
   for (const e of page.EDITIONS) assert.match(page.edition(e).body, new RegExp(`const EDITION = '${e}';`));
   assert.throws(() => page.edition('otra'));
+});
+
+test('la CSP sigue valiendo si index.html llega con CRLF (checkout en Windows)', () => {
+  const { lf, BODY } = require('../lib/page');
+  assert.equal(lf('a\r\nb\rc\n'), 'a\nb\nc\n');
+  assert.ok(!BODY.includes('\r'));
 });

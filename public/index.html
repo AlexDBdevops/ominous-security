@@ -122,6 +122,19 @@ section.block { display: grid; gap: 12px; }
 .filters { display: flex; gap: 4px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 3px; }
 .filters button { background: transparent; border: 0; color: var(--muted); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .filters button[aria-pressed="true"] { background: var(--panel); color: var(--fg); box-shadow: 0 0 0 1px var(--line); }
+.findbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; background: var(--bg); border-bottom: 1px solid var(--line); }
+.filters .n { font-family: var(--f-mono); font-size: 11.5px; opacity: .8; }
+.fgroup { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.fgroup > summary { cursor: pointer; padding: 10px 12px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; list-style: none; }
+.fgroup > summary::-webkit-details-marker { display: none; }
+.fgroup > summary::before { content: "▸"; color: var(--muted); }
+.fgroup[open] > summary::before { content: "▾"; }
+.fgroup > summary .count { font-family: var(--f-mono); font-size: 12px; color: var(--muted); }
+.fgroup > .fg-body { display: grid; gap: 10px; padding: 0 10px 10px; }
+.hidden-note { color: var(--muted); font-size: 13px; }
+.hidden-note button { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; font: inherit; }
+.tag.impact { color: var(--muted); }
+.tag.impact.open, .tag.impact.install { color: var(--warn); }
 .group-title { font-family: var(--f-display); font-size: 15px; color: var(--fg); margin: 6px 0 0; display: flex; gap: 8px; align-items: center; }
 .group-title .count { font-family: var(--f-mono); font-size: 12px; }
 .empty { color: var(--muted); font-size: 14px; padding: 14px; border: 1px dashed var(--line); border-radius: 8px; }
@@ -171,6 +184,7 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
 .watch-list .walert.unread { font-weight: 600; }
 .watch-list .forget { background: none; border: 0; color: var(--muted); font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; }
 .clone-inner { display: grid; gap: 10px; }
+.clone .where { display: grid; gap: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .clone .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .clone label.chk { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; cursor: pointer; }
 .clone label.chk input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
@@ -219,6 +233,8 @@ pre.snip { margin: 0; background: var(--code-bg); border: 1px solid var(--line);
 .conn.bad { color: var(--bad); border-color: var(--bad); }
 .conn.bad::before { background: var(--bad); }
 .conn:hover { border-color: var(--accent); }
+.conn.lang::before { display: none; }
+.conn.lang { font-family: var(--f-mono); letter-spacing: .06em; }
 dialog.cdlg { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 12px; padding: 0; width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
 dialog.cdlg::backdrop { background: rgba(5, 7, 10, .65); }
 .cdlg form { display: grid; gap: 14px; padding: 18px; }
@@ -298,6 +314,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   .scan .btn { width: 100%; }
   .filters { width: 100%; }
   .filters button { flex: 1; }
+  .findbar { position: static; }
 }
 </style>
 
@@ -309,6 +326,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       <div><h1>Ominous Security</h1><small>Revisa un repositorio de GitHub antes de clonarlo</small></div>
     </div>
     <div class="top-right">
+      <button id="langBtn" class="conn lang" type="button" data-noi18n lang="en" aria-label="Change language: English">EN</button>
       <button id="connBtn" class="conn" type="button" aria-haspopup="dialog">Conectar Claude</button>
       <span id="mode" class="mode">Conectando…</span>
     </div>
@@ -330,7 +348,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   <div class="panel scan">
     <label class="lbl" for="url">URL del repositorio</label>
     <form id="scanForm" autocomplete="off">
-      <input id="url" type="url" inputmode="url" placeholder="https://github.com/usuario/repositorio" required>
+      <input id="url" type="text" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://github.com/usuario/repositorio" required>
       <button id="scanBtn" class="btn" type="submit">Analizar</button>
     </form>
     <div class="examples" id="examples" hidden><span>Ejemplos de la demo:</span></div>
@@ -359,16 +377,28 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         <div id="aiOut" hidden></div>
       </section>
 
+      <div class="findbar" id="findBar" role="toolbar" aria-label="Filtrar los avisos">
+        <div class="filters" role="group" aria-label="Tipo de aviso" data-group="kind">
+          <button type="button" data-f="all" aria-pressed="true">Todo</button>
+          <button type="button" data-f="vuln" aria-pressed="false">Vulnerabilidades <span class="n" data-n="vuln"></span></button>
+          <button type="button" data-f="threat" aria-pressed="false">Amenazas <span class="n" data-n="threat"></span></button>
+        </div>
+        <div class="filters" role="group" aria-label="Si se puede arreglar" data-group="fix">
+          <button type="button" data-f="all" aria-pressed="true">Todos</button>
+          <button type="button" data-f="fix" aria-pressed="false">Arreglables</button>
+          <button type="button" data-f="nofix" aria-pressed="false">No arreglables</button>
+        </div>
+        <div class="filters" role="group" aria-label="A quién afecta" data-group="scope">
+          <button type="button" data-f="mine" aria-pressed="true">Lo que te afecta</button>
+          <button type="button" data-f="all" aria-pressed="false">Todo <span class="n" data-n="other"></span></button>
+        </div>
+      </div>
+
       <section class="block" id="vulnSection" aria-labelledby="vulnH">
         <div class="block-head">
           <div>
             <h2 id="vulnH">Vulnerabilidades del código <span id="vulnLamp" class="lamp"></span></h2>
-            <p>Errores de seguridad que pueden afectarte al usar el código. Separados según si puedo arreglarlos yo o no.</p>
-          </div>
-          <div class="filters" role="group" aria-label="Filtrar vulnerabilidades">
-            <button type="button" data-f="all" aria-pressed="true">Todas</button>
-            <button type="button" data-f="fix" aria-pressed="false">Arreglables</button>
-            <button type="button" data-f="nofix" aria-pressed="false">No arreglables</button>
+            <p>Errores de seguridad que pueden afectarte al usar el código. Los avisos de la misma regla van juntos; ábrelos para ver cada uno.</p>
           </div>
         </div>
         <div id="vulnList" class="wrap" style="padding:0; gap:10px"></div>
@@ -389,6 +419,12 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       <section class="panel clone" id="clonePanel" hidden aria-labelledby="cloneH">
         <h2 id="cloneH">Clonar</h2>
         <div class="clone-inner">
+          <div class="where" id="whereRow" role="radiogroup" aria-label="Dónde clonar" hidden>
+            <label class="chk" id="wherePickWrap"><input type="radio" name="where" value="pick" id="wherePick"><span>En una carpeta de tu equipo que elijas</span></label>
+            <label class="chk" id="whereZipWrap"><input type="radio" name="where" value="zip" id="whereZip"><span>Descargarlo en un .zip, para descomprimirlo donde quieras</span></label>
+            <label class="chk"><input type="radio" name="where" value="dir" id="whereDir"><span id="whereDirText">En la carpeta de clones de la app (con vigilancia diaria de sus dependencias)</span></label>
+            <p class="hint" id="whereNote" hidden></p>
+          </div>
           <div class="row" id="destRow">
             <input id="dest" type="text" placeholder="Nombre de la carpeta en ~/ominous-clones (por defecto, el del repo)" aria-label="Carpeta destino">
           </div>
@@ -423,7 +459,10 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   const STATUS = { green: 'Verde', yellow: 'Amarillo', red: 'Rojo' };
   let LIVE = false;
   let current = null;
-  let vulnFilter = 'all';
+  let cloneDirLabel = '~/ominous-clones'; // carpeta de clones de la app; la ruta real la da /api/health
+  // Filtros de la lista de avisos: tipo (todo / vulnerabilidades / amenazas), si se pueden arreglar
+  // y si te afectan a ti. Se combinan entre sí.
+  const view = { kind: 'all', fix: 'all', scope: 'mine' };
   let AI_SERVER = false;
   // Edición de la página (la fija scripts/build-site.js):
   // 'local'  servidor local, con Claude a través del servidor;
@@ -431,7 +470,63 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   // 'web-ai' artefacto de claude.ai: análisis en el navegador y revisión con la cuenta de claude.ai.
   const EDITION = 'local';
   const WEB = EDITION !== 'local';
-  let engine = null; // worker (o la propia página) que guarda en memoria el último repo analizado
+  let engine = null; // worker (o la propia página) que analiza el repo en el navegador
+
+  // ---------- Idioma ----------
+  // La página se escribe en español; en inglés, un observador traduce lo que se pinta con
+  // window.Ominous.tr (lib/i18n.js). No toca código, diffs ni comandos, y lo que no conoce
+  // (la respuesta de la IA, los avisos de OSV) se queda como llega.
+  const NO_I18N = 'pre, code, textarea, script, style, .snip, .diff, .cmd, [data-noi18n]';
+  const I18N_ATTRS = ['placeholder', 'title', 'aria-label'];
+  const ORIG = new WeakMap();      // nodo de texto → texto original en español
+  const ORIG_ATTR = new WeakMap(); // elemento → { atributo: original }
+  let LANG = '';
+  try { LANG = localStorage.getItem('ominous-lang') || ''; } catch { /* sin almacenamiento */ }
+  if (LANG !== 'es' && LANG !== 'en') LANG = /^es\b/i.test(navigator.language || '') ? 'es' : 'en';
+  const trText = (s) => (LANG === 'en' && window.Ominous && window.Ominous.tr ? window.Ominous.tr(s) : s);
+  function i18nAttrs(el) {
+    let saved = ORIG_ATTR.get(el);
+    for (const a of I18N_ATTRS) {
+      if (!el.hasAttribute(a)) continue;
+      if (!saved) ORIG_ATTR.set(el, (saved = {}));
+      if (!(a in saved)) saved[a] = el.getAttribute(a);
+      const want = trText(saved[a]);
+      if (el.getAttribute(a) !== want) el.setAttribute(a, want);
+    }
+  }
+  function i18nTree(n) {
+    if (n.nodeType === 3) {
+      if (!n.parentElement || n.parentElement.closest(NO_I18N)) return;
+      if (!ORIG.has(n)) ORIG.set(n, n.data);
+      const want = trText(ORIG.get(n));
+      if (n.data !== want) n.data = want;
+    } else if (n.nodeType === 1 && !n.closest(NO_I18N)) {
+      i18nAttrs(n);
+      for (const c of n.childNodes) i18nTree(c);
+    }
+  }
+  const i18nObserver = new MutationObserver((records) => {
+    for (const r of records) {
+      if (r.type === 'characterData') { ORIG.set(r.target, r.target.data); i18nTree(r.target); }
+      else if (r.type === 'attributes') { const s = ORIG_ATTR.get(r.target); if (s) delete s[r.attributeName]; i18nAttrs(r.target); }
+      else r.addedNodes.forEach(i18nTree);
+    }
+    i18nObserver.takeRecords(); // lo que acaba de cambiar el propio traductor
+  });
+  function setLang(l) {
+    LANG = l;
+    try { localStorage.setItem('ominous-lang', l); } catch { /* sin almacenamiento */ }
+    document.documentElement.lang = l;
+    const b = $('#langBtn');
+    b.textContent = l === 'es' ? 'EN' : 'ES';
+    b.lang = l === 'es' ? 'en' : 'es';
+    b.setAttribute('aria-label', l === 'es' ? 'Change language: English' : 'Cambiar idioma: español');
+    i18nTree(document.body);
+    i18nObserver.takeRecords();
+  }
+  $('#langBtn').addEventListener('click', () => setLang(LANG === 'es' ? 'en' : 'es'));
+  i18nObserver.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: I18N_ATTRS });
+  setLang(LANG);
 
   function el(tag, attrs = {}, ...kids) {
     const n = document.createElement(tag);
@@ -483,7 +578,8 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         }
         $('#mode').textContent = 'Servidor local';
         $('#mode').className = 'mode live';
-        $('#modeNote').textContent = `Los repos se descargan en una carpeta temporal y nunca se ejecuta nada de ellos. Los clones van a ${j.cloneDir}.`;
+        cloneDirLabel = j.cloneDir || cloneDirLabel;
+        $('#modeNote').textContent = `Los repos se analizan en una carpeta temporal y nunca se ejecuta nada de ellos. Al clonar eliges dónde; la carpeta de clones de la app es ${cloneDirLabel}.`;
         $('#dest').placeholder = `Nombre de la carpeta en ${j.cloneDir} (por defecto, el del repo)`;
         loadWatch();
         return;
@@ -535,7 +631,11 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   });
 
   // ---------- Análisis ----------
-  const STEPS = ['Descargando el repositorio en una carpeta aislada (sin ejecutar nada)', 'Revisando el historial de git y los submódulos', 'Buscando vulnerabilidades en el código', 'Buscando scripts maliciosos y autoejecutables', 'Decodificando payloads ocultos (ingeniería inversa)', 'Consultando vulnerabilidades conocidas de las dependencias', 'Evaluando la reputación del autor'];
+  // Pasos de la demo (simulados; en la app y en la versión web se enseñan los reales). Siguen el
+  // orden real: la reputación es lo primero que se consulta, y la espera se queda en el paso que
+  // de verdad tarda (WAIT_STEP); al terminar, los que faltan se completan de golpe.
+  const STEPS = ['Evaluando la reputación del autor', 'Descargando el repositorio en una carpeta aislada (sin ejecutar nada)', 'Revisando el historial de git y los submódulos', 'Buscando vulnerabilidades en el código', 'Buscando scripts maliciosos y autoejecutables', 'Decodificando payloads ocultos (ingeniería inversa)', 'Consultando vulnerabilidades conocidas de las dependencias'];
+  const WAIT_STEP = 3;
   let stepTimer = null;
   const now = () => new Date().toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   // Análisis real en el navegador: el registro muestra los pasos que va dando el analizador.
@@ -550,19 +650,47 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     if (real) { p.replaceChildren(); return; }
     p.replaceChildren(...STEPS.map((s) => el('div', { class: 'step' }, el('span', { class: 'ts' }, '--:--:--'), el('span', { class: 'st2' }, '    '), el('span', { class: 'dot' }), s)));
     let i = 0;
-    const tick = () => {
-      [...p.children].forEach((c, j) => {
-        const cls = 'step' + (j < i ? ' done' : j === i ? ' run' : '');
-        if (c.className !== cls && j <= i) c.querySelector('.ts').textContent = now();
-        c.className = cls;
-        c.querySelector('.st2').textContent = j < i ? 'ok' : j === i ? '…' : '';
-      });
-      if (i < STEPS.length - 1) i++;
+    const paint = () => [...p.children].forEach((c, j) => {
+      const cls = 'step' + (j < i ? ' done' : j === i ? ' run' : '');
+      if (c.className !== cls && j <= i) c.querySelector('.ts').textContent = now();
+      c.className = cls;
+      c.querySelector('.st2').textContent = j < i ? 'ok' : j === i ? '…' : '';
+    });
+    paint();
+    stepTimer = setInterval(() => { if (i < WAIT_STEP) { i++; paint(); } }, 380);
+    finishSteps = async () => {
+      clearInterval(stepTimer);
+      while (i < STEPS.length) { i++; paint(); await new Promise((r) => setTimeout(r, 90)); }
     };
-    tick();
-    stepTimer = setInterval(tick, LIVE ? 2200 : 380);
   }
-  function hideProgress() { clearInterval(stepTimer); $('#progress').hidden = true; }
+  let finishSteps = async () => {};
+  function hideProgress() { clearInterval(stepTimer); finishSteps = async () => {}; $('#progress').hidden = true; }
+
+  // App local: el servidor manda cada paso real del análisis según ocurre (líneas JSON).
+  async function liveAnalyze(url) {
+    const r = await fetch('/api/analyze', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' }, body: JSON.stringify({ url }) });
+    if (!r.ok || !r.body || !/ndjson/.test(r.headers.get('content-type') || '')) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.error || 'Error al analizar');
+    }
+    const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (value) buf += value;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        if (!line.trim()) continue;
+        const m = JSON.parse(line);
+        if (m.log) progressLine(m.log);
+        else if (m.error) throw Object.assign(new Error(m.error), { status: m.status });
+        else if (m.result) return m.result;
+      }
+      if (done) throw new Error('La conexión con la app se cortó antes de terminar el análisis.');
+    }
+  }
 
   async function run(url) {
     $('#scanErr').hidden = true;
@@ -570,19 +698,18 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     $('#clonePanel').hidden = true;
     $('#aiPanel').hidden = true;
     $('#scanBtn').disabled = true;
-    const real = WEB && !Object.values(DEMO_URLS).includes(url);
+    const real = LIVE || (WEB && !Object.values(DEMO_URLS).includes(url));
     showProgress(real);
     try {
       let data;
       if (LIVE) {
-        const r = await fetch('/api/analyze', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
-        data = await r.json();
-        if (!r.ok) throw new Error(data.error || 'Error al analizar');
+        data = await liveAnalyze(url);
       } else if (real) {
         data = await webAnalyze(url);
       } else {
         await new Promise((r) => setTimeout(r, 2300));
         data = demoAnalyze(url);
+        await finishSteps();
       }
       current = data;
       render(data);
@@ -602,16 +729,28 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
 
   // ---------- Análisis en el navegador (ediciones web) ----------
   // El analizador corre en un Web Worker: si un fichero preparado para colgar las
-  // expresiones regulares lo bloquea, la página lo corta a los 5 minutos.
+  // expresiones regulares lo bloquea, la página lo corta a los 5 minutos. Antes de eso
+  // el propio analizador para solo (plazo con margen para la consulta que esté en curso)
+  // y devuelve lo que ha podido revisar en vez de un error.
   const WEB_TIMEOUT = 5 * 60 * 1000;
+  const WEB_MARGIN = 75 * 1000;
   const asError = (x) => Object.assign(new Error(x.message), x);
+  // Sin worker no se puede cortar desde fuera: el plazo es todo el tiempo.
   function pageEngine() {
     if (!window.Ominous) throw new Error('No se pudo cargar el analizador (analyzer.js). Recarga la página.');
+    let ctl = null;
     return {
-      send: (msg, onLog) => new Promise((resolve, reject) => window.Ominous.handle(msg, (m) => {
-        if (m.log) { if (onLog) onLog(m.log); } else if (m.error) reject(asError(m.error)); else resolve(m.result);
-      })),
-      kill: () => {},
+      send: (msg, onLog) => {
+        if (msg.type === 'analyze') {
+          if (ctl) ctl.abort();
+          ctl = new AbortController();
+          msg = { ...msg, deadline: Date.now() + WEB_TIMEOUT, inPage: true, signal: ctl.signal };
+        }
+        return new Promise((resolve, reject) => window.Ominous.handle(msg, (m) => {
+          if (m.log) { if (onLog) onLog(m.log); } else if (m.error) reject(asError(m.error)); else resolve(m.result);
+        }));
+      },
+      kill: () => { if (ctl) ctl.abort(); },
     };
   }
   function workerEngine() {
@@ -622,8 +761,9 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         const timer = setTimeout(() => {
           w.terminate();
           if (engine === self) engine = null;
-          reject(new Error('El análisis superó 5 minutos y se ha cortado. Puede ser un repo muy grande o un fichero diseñado para bloquear analizadores: trátalo como sospechoso.'));
+          reject(new Error('El análisis se quedó bloqueado y se ha cortado a los 5 minutos. Suele ser un fichero diseñado para bloquear analizadores: trátalo como sospechoso.'));
         }, WEB_TIMEOUT);
+        if (msg.type === 'analyze') msg = { ...msg, deadline: Date.now() + WEB_TIMEOUT - WEB_MARGIN };
         w.onmessage = (ev) => {
           started = true;
           const m = ev.data || {};
@@ -635,7 +775,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
           clearTimeout(timer);
           if (ev && ev.preventDefault) ev.preventDefault();
           if (started) { reject(new Error('El analizador ha fallado.')); return; }
-          // El visor no deja arrancar el worker: el mismo análisis en la página, sin corte por tiempo.
+          // El visor no deja arrancar el worker: el mismo análisis en la página, con plazo.
           try { engine = pageEngine(); engine.send(msg, onLog).then(resolve, reject); } catch (e) { reject(e); }
         };
         w.postMessage(msg);
@@ -661,7 +801,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     v.classList.add('reveal');
     const verdictText = {
       green: 'No he encontrado problemas relevantes. Puedes clonarlo.',
-      yellow: 'Hay puntos a revisar antes de usarlo. Clonar requiere confirmación.',
+      yellow: WEB ? 'Hay puntos a revisar antes de usarlo.' : 'Hay puntos a revisar antes de usarlo. Clonar requiere confirmación.',
       red: 'Riesgo alto. No recomiendo clonarlo ni ejecutarlo.',
     }[s.overall];
     const meta = d.repo.meta || {};
@@ -685,11 +825,15 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     $('#vulnLamp').textContent = STATUS[s.vulnStatus];
     $('#threatLamp').className = `lamp ${s.threatStatus}`;
     $('#threatLamp').textContent = STATUS[s.threatStatus];
-    renderVulns();
-    renderThreats();
+    const all = [...d.vulnerabilities, ...d.threats];
+    const setN = (k, n) => { const s = document.querySelector(`#findBar [data-n="${k}"]`); if (s) s.textContent = n ? `(${n})` : ''; };
+    setN('vuln', d.vulnerabilities.filter(mine).length);
+    setN('threat', d.threats.filter(mine).length);
+    setN('other', all.filter((f) => !mine(f)).length ? `+${all.filter((f) => !mine(f)).length}` : 0);
+    setView('kind', view.kind);
 
     const dep = d.dependencies || {};
-    $('#depsLine').textContent = dep.total
+    $('#depsLine').textContent = dep.skipped ? 'Dependencias: sin revisar, se acabó el tiempo del análisis.' : dep.total
       ? (dep.osvAvailable ? `Dependencias: ${dep.total} encontradas, ${dep.checked} con versión exacta consultadas en OSV.dev, ${dep.vulnerable} con vulnerabilidades conocidas.` : `Dependencias: ${dep.total} encontradas. No se pudo consultar OSV.dev (${dep.osvError || 'sin conexión'}).`)
       : 'No se encontraron ficheros de dependencias (package.json, requirements.txt, go.mod).';
 
@@ -720,14 +864,14 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
 
   function findingCard(f) {
     const card = el('article', { class: 'finding', 'data-sev': f.severity },
-      el('div', { class: 'f-top' }, el('span', { class: `sev ${f.severity}` }, SEV[f.severity] || f.severity), el('span', { class: 'f-title' }, f.title, f.ai ? el('span', { class: 'tag ia' }, 'IA') : null)),
+      el('div', { class: 'f-top' }, el('span', { class: `sev ${f.severity}` }, SEV[f.severity] || f.severity), el('span', { class: 'f-title' }, f.title, f.ai ? el('span', { class: 'tag ia' }, 'IA') : null, f.impact && IMPACT[f.impact] ? el('span', { class: `tag impact ${f.impact}`, title: 'Cuándo te afectaría' }, IMPACT[f.impact]) : null)),
       loc(f),
       f.description ? el('p', { class: 'f-desc' }, f.description) : null,
       f.detail ? el('p', { class: 'f-desc' }, f.detail) : null,
       f.snippet ? el('pre', { class: 'snip' }, f.snippet) : null);
     if (f.kind === 'vuln') {
       card.append(f.fixable
-        ? el('div', { class: 'fix yes' }, el('b', {}, 'Lo arreglo:'), el('span', {}, f.fix.text, f.fix.auto && f.severity !== 'info' ? el('span', { class: 'tag' }, current && current.web ? 'automático, en el parche' : 'automático al clonar') : null))
+        ? el('div', { class: 'fix yes' }, el('b', {}, 'Lo arreglo:'), el('span', {}, f.fix.text, f.fix.auto && f.severity !== 'info' ? el('span', { class: 'tag' }, WEB ? 'automático al clonar con la app local' : 'automático al clonar') : null))
         : el('div', { class: 'fix no' }, el('b', {}, 'No arreglable:'), el('span', {}, f.notFixableReason)));
     }
     if (f.decoded) card.append(reBlock(f.decoded));
@@ -791,45 +935,95 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     return [...nodes, more];
   }
 
-  function renderVulns() {
-    const list = $('#vulnList');
-    const v = current.vulnerabilities;
-    const fix = v.filter((x) => x.fixable);
-    const nofix = v.filter((x) => !x.fixable);
-    const parts = [];
-    if (!v.length) parts.push(el('div', { class: 'empty' }, 'No se han detectado vulnerabilidades.'));
-    if (vulnFilter !== 'nofix' && v.length) {
-      parts.push(el('h3', { class: 'group-title' }, 'Puedo arreglarlas', el('span', { class: 'count' }, `(${fix.length})`)));
-      parts.push(...(fix.length ? capped(fix) : [el('div', { class: 'empty' }, 'Ninguna.')]));
+  // Cuándo te afectaría cada aviso (lib/review.js). Lo del autor, su web o su despliegue no es tuyo.
+  const IMPACT = { open: 'al abrir el repo', install: 'al instalar', run: 'al ejecutarlo', copy: 'si copias el comando', deploy: 'solo al desplegarlo', docs: 'solo su web de docs', author: 'solo al autor' };
+  const NOT_MINE = new Set(['deploy', 'docs', 'author']);
+  const RANK = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+  const mine = (f) => !NOT_MINE.has(f.impact) && f.severity !== 'info';
+  const passes = (f) => (view.scope === 'all' || mine(f))
+    && (view.fix === 'all' || (view.fix === 'fix' ? !!f.fixable : !f.fixable));
+
+  // Los avisos de la misma regla van juntos en un bloque plegable: con 90 avisos de una regla
+  // de Semgrep, la lista no se hace infinita y se ve de un vistazo qué tipos hay.
+  function grouped(list) {
+    const groups = new Map();
+    for (const f of list) {
+      const key = /^ext-/.test(f.rule) ? `${f.rule}|${f.title}` : f.rule;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(f);
     }
-    if (vulnFilter !== 'fix' && v.length) {
-      parts.push(el('h3', { class: 'group-title' }, 'No puedo arreglarlas', el('span', { class: 'count' }, `(${nofix.length})`)));
-      parts.push(...(nofix.length ? capped(nofix) : [el('div', { class: 'empty' }, 'Ninguna.')]));
-    }
-    list.replaceChildren(...parts);
+    const max = (g) => Math.max(...g.map((f) => RANK[f.severity] || 0));
+    return [...groups.values()].sort((a, b) => (max(b) - max(a)) || (b.length - a.length)).map((g) => {
+      if (g.length === 1) return findingCard(g[0]);
+      const top = g.reduce((a, f) => ((RANK[f.severity] || 0) > (RANK[a.severity] || 0) ? f : a), g[0]);
+      const same = g.every((f) => f.title === g[0].title);
+      const title = g[0].rule === 'dep-vuln' ? 'Dependencias con vulnerabilidades conocidas' : same ? g[0].title : (top.explain && top.explain.name) || top.title;
+      const files = new Set(g.map((f) => f.file)).size;
+      const body = el('div', { class: 'fg-body' });
+      const d = el('details', { class: 'fgroup' },
+        el('summary', {}, el('span', { class: `sev ${top.severity}` }, SEV[top.severity] || top.severity), el('span', { class: 'f-title' }, title),
+          el('span', { class: 'count' }, `${g.length} avisos${files > 1 ? ` en ${files} ficheros` : ''}`),
+          top.impact ? el('span', { class: `tag impact ${top.impact}` }, IMPACT[top.impact]) : null),
+        body);
+      // Las tarjetas se crean al abrir el bloque, no antes
+      d.addEventListener('toggle', () => { if (d.open && !body.childElementCount) body.append(...capped(g, 20)); });
+      return d;
+    });
   }
 
-  document.querySelectorAll('.filters button').forEach((b) => b.addEventListener('click', () => {
-    vulnFilter = b.dataset.f;
-    document.querySelectorAll('.filters button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-    renderVulns();
-  }));
+  function hiddenNote(n) {
+    if (!n) return null;
+    const b = el('button', { type: 'button' }, 'verlos');
+    b.addEventListener('click', () => setView('scope', 'all'));
+    return el('p', { class: 'hidden-note' }, `${n} aviso${n === 1 ? '' : 's'} que no te afecta${n === 1 ? '' : 'n'} (del autor, de su web o de su despliegue, o solo informativos) están ocultos: `, b, '.');
+  }
+
+  function renderVulns() {
+    const v = current.vulnerabilities;
+    const shown = v.filter(passes);
+    const hidden = view.scope === 'mine' ? v.filter((f) => !mine(f) && (view.fix === 'all' || (view.fix === 'fix') === !!f.fixable)).length : 0;
+    const parts = [];
+    if (!v.length) parts.push(el('div', { class: 'empty' }, 'No se han detectado vulnerabilidades.'));
+    else if (!shown.length) parts.push(el('div', { class: 'empty' }, view.fix === 'fix' ? 'Ninguna que yo pueda arreglar con estos filtros.' : 'Ninguna con estos filtros.'));
+    else parts.push(...grouped(shown));
+    parts.push(hiddenNote(hidden));
+    $('#vulnList').replaceChildren(...parts.filter(Boolean));
+  }
+
+  function setView(group, value) {
+    view[group] = value;
+    document.querySelectorAll(`#findBar [data-group="${group}"] button`).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.f === value)));
+    $('#vulnSection').hidden = view.kind === 'threat';
+    $('#threatSection').hidden = view.kind === 'vuln';
+    if (current) { renderVulns(); renderThreats(); }
+  }
+  document.querySelectorAll('#findBar .filters').forEach((g) => g.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => setView(g.dataset.group, b.dataset.f))));
+  // Las fichas del resumen llevan a su sección aunque el filtro de tipo la esté ocultando
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('a.tile');
+    if (a && /#(vuln|threat)Section$/.test(a.getAttribute('href')) && view.kind !== 'all') setView('kind', 'all');
+  });
 
   function renderThreats() {
     const t = current.threats;
-    const hidden = t.filter((x) => x.decoded);
-    const rest = t.filter((x) => !x.decoded);
+    const shown = t.filter(passes);
+    const hiddenN = view.scope === 'mine' ? t.filter((f) => !mine(f)).length : 0;
+    const hidden = shown.filter((x) => x.decoded);
+    const rest = shown.filter((x) => !x.decoded);
     const parts = [];
     if (!t.length) parts.push(el('div', { class: 'empty' }, 'No se han detectado amenazas deliberadas en los scripts de instalación ni en el resto del código.'));
+    else if (view.fix === 'fix') parts.push(el('div', { class: 'empty' }, 'Las amenazas no se arreglan: se avisan para que decidas si clonar el repo.'));
+    else if (!shown.length) parts.push(el('div', { class: 'empty' }, 'Ninguna que te afecte con estos filtros.'));
     if (hidden.length) {
       parts.push(el('h3', { class: 'group-title' }, 'Scripts ocultos y cifrados', el('span', { class: 'count' }, `(${hidden.length})`)));
       parts.push(...capped(hidden));
     }
-    if (rest.length) {
-      parts.push(el('h3', { class: 'group-title' }, hidden.length ? 'Otras amenazas' : 'Hallazgos', el('span', { class: 'count' }, `(${rest.length})`)));
-      parts.push(...capped(rest));
+    if (rest.length && view.fix !== 'fix') {
+      if (hidden.length) parts.push(el('h3', { class: 'group-title' }, 'Otras amenazas', el('span', { class: 'count' }, `(${rest.length})`)));
+      parts.push(...grouped(rest));
     }
-    $('#threatList').replaceChildren(...parts);
+    if (view.fix !== 'fix') parts.push(hiddenNote(hiddenN));
+    $('#threatList').replaceChildren(...parts.filter(Boolean));
   }
 
 
@@ -1116,20 +1310,42 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     }
   });
 
-  // ---------- Clonado ----------
+  // ---------- Clonado (solo en la app local: la versión web no clona) ----------
+  // Clonar en una carpeta que eliges: el navegador escribe en ella (File System Access API, en
+  // Chrome y Edge). No dentro de un marco ajeno, como la vista previa de claude.ai, donde no se permite.
+  // Descargar un .zip funciona en cualquier navegador, salvo dentro de un marco (vista previa).
+  const IN_FRAME = window.self !== window.top;
+  const CAN_PICK = typeof window.showDirectoryPicker === 'function' && !IN_FRAME;
+  const CAN_ZIP = !IN_FRAME;
+  const cloneMode = () => (LIVE ? (document.querySelector('input[name="where"]:checked') || {}).value || 'dir' : 'dir');
+  function syncWhere() {
+    const m = cloneMode();
+    $('#destRow').hidden = m === 'zip';
+    $('#dest').placeholder = m === 'pick' ? `Si la carpeta que eliges no está vacía, se crea dentro esta (por defecto, ${current ? current.repo.name : 'el nombre del repo'})` : `Nombre de la carpeta en ${cloneDirLabel} (por defecto, el del repo)`;
+    if (!current) return;
+    const n = current.summary.autoFixable;
+    const fixes = `${n} arreglo${n > 1 ? 's' : ''} automático${n > 1 ? 's' : ''}`;
+    $('#fixChkText').textContent = `Aplicar ${fixes} al clonar`;
+    const name = current.repo.name;
+    $('#cloneBtn').textContent = m === 'pick' ? `Elegir carpeta y clonar ${name}` : m === 'zip' ? `Descargar ${name}.zip` : `Clonar ${name} en la carpeta de clones`;
+  }
+  document.querySelectorAll('input[name="where"]').forEach((r) => r.addEventListener('change', syncWhere));
+
   function renderClone() {
+    if (WEB) { $('#clonePanel').hidden = true; return; }
     const s = current.summary;
-    const web = !!current.web;
     $('#clonePanel').hidden = false;
-    $('#destRow').hidden = web;
-    $('#cloneH').textContent = web ? 'Clonar en tu equipo' : 'Clonar';
+    $('#whereRow').hidden = !LIVE;
+    $('#wherePickWrap').hidden = !CAN_PICK;
+    $('#whereZipWrap').hidden = !CAN_ZIP;
+    $('#whereNote').hidden = CAN_PICK;
+    $('#whereNote').textContent = 'Este navegador no deja que una página elija una carpeta de tu equipo: lo permiten Chrome y Edge de escritorio (no Firefox, Safari, Brave ni los móviles).' + (CAN_ZIP ? ' Con el .zip tienes lo mismo: lo descomprimes donde quieras.' : '');
+    (CAN_PICK ? $('#wherePick') : CAN_ZIP ? $('#whereZip') : $('#whereDir')).checked = true;
+    $('#whereDirText').textContent = `En la carpeta de clones de la app, ${cloneDirLabel} (con vigilancia diaria de sus dependencias)`;
     $('#cloneOut').hidden = true;
     $('#ackChk').checked = false;
     $('#fixChk').checked = false;
     $('#fixChkWrap').hidden = !s.autoFixable;
-    $('#fixChkText').textContent = web
-      ? `Descargar también un parche con ${s.autoFixable} arreglo${s.autoFixable > 1 ? 's' : ''} automático${s.autoFixable > 1 ? 's' : ''}`
-      : `Aplicar ${s.autoFixable} arreglo${s.autoFixable > 1 ? 's' : ''} automático${s.autoFixable > 1 ? 's' : ''} al clonar`;
     const aiRaised = !!(current.aiReview && current.aiReview.raises);
     const risky = s.overall !== 'green' || aiRaised;
     $('#riskWrap').hidden = !risky;
@@ -1140,7 +1356,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
       : 'Estado amarillo: hay vulnerabilidades o avisos que revisar.';
     $('#ackText').textContent = s.overall === 'red' ? 'Entiendo que este repositorio puede ser malicioso y quiero clonarlo igualmente (no se ejecutará nada).' : 'He revisado los avisos y quiero clonar igualmente.';
     $('#cloneBtn').className = `btn clone-btn ${s.overall === 'red' ? 'risky' : ''}`;
-    $('#cloneBtn').textContent = web ? 'Ver el comando para clonar' : `Clonar ${current.repo.name}`;
+    syncWhere();
     syncCloneBtn();
   }
   function syncCloneBtn() {
@@ -1149,62 +1365,179 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
   }
   $('#ackChk').addEventListener('change', syncCloneBtn);
 
-  // Versión web: no hay servidor que clone. Se da el comando que deja el clon en el
-  // commit exacto analizado y, si se pide, el parche con los arreglos automáticos.
-  async function saveFile(name, text) {
-    const dl = window.claude && typeof window.claude.use === 'function' ? await window.claude.use('downloads').catch(() => null) : null;
-    if (dl) { await dl.save({ filename: `${name}.txt`, data: text }); return `${name}.txt`; }
-    const a = el('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/x-diff' })), download: name });
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    return name;
+  // ---------- Escribir el clon en la carpeta elegida ----------
+  // Cada parte de la ruta tiene que ser un nombre normal: nada de "..", barras ni caracteres de
+  // control (el navegador también lo exige, pero aquí se comprueba antes). Los nombres que tu
+  // sistema no admite (CON o "a:b" en Windows) se saltan y se dicen al final.
+  const SEGMENT = /^(?!\.{1,2}$)[^/\\\u0000-\u001f]{1,255}$/;
+  async function writeFile(rootDir, rel, onChunk) {
+    const parts = rel.split('/').filter(Boolean);
+    if (!parts.length || !parts.every((p) => SEGMENT.test(p))) throw new Error(`ruta no válida: ${rel}`);
+    let dir = rootDir;
+    for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
+    const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+    const w = await fh.createWritable();
+    try { await onChunk(w); await w.close(); } catch (e) { await w.abort().catch(() => {}); throw e; }
   }
 
-  async function webClone() {
-    const r = current.repo;
-    const dir = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,99}$/.test(r.name) && !/^\.+$/.test(r.name) ? r.name : 'repo';
-    const lines = [`git clone --no-checkout --no-recurse-submodules -- ${r.url}.git ./${dir}`, `git -C ./${dir} checkout -q ${r.commit}`];
-    const parts = [el('div', {}, 'Ejecútalo en tu terminal. Clona el commit exacto que se ha analizado (', el('code', {}, String(r.commit).slice(0, 10)), '), sin submódulos.')];
-    if ($('#fixChk').checked) {
-      if (!engine) throw new Error('El análisis ya no está en memoria. Vuelve a analizar el repo para generar el parche.');
-      const auto = current.vulnerabilities.filter((v) => v.fix && v.fix.auto && v.severity !== 'info');
-      const p = await engine.send({ type: 'patch', findings: auto });
-      if (p.diff) {
-        const name = await saveFile(`ominous-arreglos-${dir}.patch`, p.diff);
-        lines.push(`git -C ./${dir} apply RUTA/${name}`);
-        const files = new Set(p.applied.map((f) => f.file)).size;
-        parts.push(el('div', { class: 'changes' }, el('h3', {}, `Parche: ${p.applied.length} arreglo${p.applied.length > 1 ? 's' : ''} en ${files} fichero${files > 1 ? 's' : ''}`),
-          el('p', { class: 'ai-note' }, `Se ha descargado ${name}. Cambia RUTA por la carpeta donde se guardó. Revisa el diff antes de aplicarlo.`), diffView(p.diff)));
+  // Lee un tar (el que prepara la app) a medida que llega y escribe cada fichero.
+  async function untarInto(body, rootDir, onProgress) {
+    const reader = body.getReader();
+    let buf = new Uint8Array(0);
+    let done = false;
+    const need = async (n) => {
+      while (buf.length < n && !done) {
+        const r = await reader.read();
+        if (r.done) { done = true; break; }
+        const b = new Uint8Array(buf.length + r.value.length); b.set(buf); b.set(r.value, buf.length); buf = b;
       }
+      return buf.length >= n;
+    };
+    const take = (n) => { const out = buf.subarray(0, n); buf = buf.subarray(n); return out; };
+    const text = (b) => new TextDecoder().decode(b).replace(/\0.*$/s, '');
+    const failed = [];
+    let paxPath = null;
+    let written = 0;
+    let files = 0;
+    for (;;) {
+      if (!await need(512)) break;
+      const h = take(512);
+      if (h.every((x) => x === 0)) break;
+      const size = parseInt(text(h.subarray(124, 136)).trim() || '0', 8);
+      const type = String.fromCharCode(h[156] || 48);
+      const name = paxPath || text(h.subarray(0, 100));
+      paxPath = null;
+      const pad = (512 - (size % 512)) % 512;
+      if (type === 'x') {
+        if (!await need(size + pad)) throw new Error('El clon llegó cortado.');
+        const m = new TextDecoder().decode(take(size)).match(/\d+ path=([^\n]*)\n/);
+        paxPath = m ? m[1] : null;
+        take(pad);
+        continue;
+      }
+      if (type === '5') { continue; } // las carpetas se crean al escribir sus ficheros
+      if (type !== '0') { if (!await need(size + pad)) break; take(size + pad); continue; }
+      let left = size;
+      const pump = async (w) => {
+        while (left > 0) {
+          if (!await need(1)) throw new Error('El clon llegó cortado.');
+          const part = take(Math.min(left, buf.length));
+          if (w) await w.write(part);
+          left -= part.length; written += part.length;
+          onProgress(written, files);
+        }
+      };
+      try { await writeFile(rootDir, name, pump); files++; } catch (e) { failed.push(name); await pump(null); }
+      if (!await need(pad)) break;
+      take(pad);
     }
-    const cmd = lines.join('\n');
-    const copy = el('button', { class: 'btn sm ghost', type: 'button' }, 'Copiar');
-    copy.addEventListener('click', () => {
-      navigator.clipboard.writeText(cmd).then(() => { copy.textContent = 'Copiado'; }, () => { copy.textContent = 'No se pudo copiar: selecciónalo a mano'; });
-    });
-    parts.splice(1, 0, el('pre', { class: 'cmd' }, cmd), copy);
+    return { files, failed };
+  }
+
+  // Lo que se enseña al terminar, igual para la carpeta elegida y para el .zip
+  function cloneResult({ where, files, failed = [], r, zip = false }) {
+    const c = String(current.repo.commit);
+    const parts = [el('div', {}, zip ? 'Descargando ' : 'Clonado en ', el('code', {}, where), ` (commit ${c.slice(0, 10)}, ${files} ficheros).${zip ? ' Descomprímelo donde quieras: dentro hay una carpeta con el nombre del repo.' : ''}`)];
+    parts.push(el('p', { class: 'ai-note' }, `Es un clon de git completo de esa rama. ${zip ? 'El .zip no guarda' : 'El navegador no puede crear'} enlaces simbólicos ni permisos de ejecución: los enlaces quedan como ficheros de texto y el clon está configurado para que git no lo vea como cambios. La vigilancia diaria solo la tienen los clones de la carpeta de clones de la app.`));
+    if (r.pinnedToAnalyzedCommit) parts.push(el('div', {}, 'El repositorio cambió después del análisis: lo he dejado en el commit analizado.'));
+    if (failed.length) parts.push(el('div', { class: 'warnline' }, `${failed.length} fichero${failed.length > 1 ? 's' : ''} con nombres que tu sistema no admite no se han escrito: ${failed.slice(0, 5).join(', ')}${failed.length > 5 ? '…' : ''}`));
+    if ((r.fixesApplied || r.applied || []).length) parts.push(changesBlock({ ...r, fixesApplied: r.fixesApplied || r.applied, picked: true }));
     if (current.summary.overall === 'red') parts.push(el('p', { class: 'ai-note' }, 'No abras la carpeta en un editor que confíe en ella ni instales sus dependencias: las amenazas siguen ahí.'));
     return parts;
   }
 
+  // Prepara el clon en la app (commit analizado y arreglos) y devuelve el token de descarga
+  async function prepareClone(fixes) {
+    const prep = await fetch('/api/export', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: current.id, acknowledged: $('#ackChk').checked, applyFixes: fixes }) });
+    const r = await prep.json();
+    if (!prep.ok) throw new Error(r.error || 'No se pudo preparar el clon');
+    return r;
+  }
+
+  async function pickAndClone() {
+    const btn = $('#cloneBtn');
+    const out = $('#cloneOut');
+    const label = btn.textContent;
+    const name = ($('#dest').value || current.repo.name).trim();
+    if (!SEGMENT.test(name)) { out.className = 'err'; out.textContent = 'El nombre de la carpeta no es válido: sin barras ni "..".'; out.hidden = false; return; }
+    let parent;
+    try {
+      // Lo primero, para que el navegador lo asocie al clic
+      parent = await window.showDirectoryPicker({ id: 'ominous-clone', mode: 'readwrite' });
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      out.className = 'err'; out.textContent = `El navegador no ha dejado elegir carpeta (${e.message}).`; out.hidden = false; return;
+    }
+    btn.disabled = true;
+    out.hidden = true;
+    try {
+      // Si la carpeta elegida está vacía, el clon va directamente en ella; si no, en una carpeta
+      // nueva dentro (como git clone), que no puede existir ya con contenido.
+      let empty = true;
+      for await (const _ of parent.keys()) { empty = false; break; } // eslint-disable-line no-unused-vars
+      if (!empty) {
+        let exists = null;
+        try { exists = await parent.getDirectoryHandle(name); } catch { /* no existe */ }
+        if (exists) { for await (const _ of exists.keys()) throw new Error(`Ya hay una carpeta "${name}" con contenido en ${parent.name}. Elige una carpeta vacía u otro nombre.`); } // eslint-disable-line no-unused-vars
+      }
+      const fixes = $('#fixChk').checked;
+      btn.textContent = fixes ? 'Clonando y aplicando arreglos…' : 'Clonando…';
+      const r = await prepareClone(fixes);
+      const res = await fetch(`/api/export/${r.token}`);
+      if (!res.ok || !res.body) throw new Error('No se pudo descargar el clon preparado.');
+      const dir = empty ? parent : await parent.getDirectoryHandle(name, { create: true });
+      const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
+      const total = Number(res.headers.get('x-ominous-bytes')) || r.bytes || 0;
+      const w = await untarInto(res.body, dir, (bytes, n) => { btn.textContent = `Escribiendo… ${mb(bytes)}${total ? ` de ${mb(total)}` : ''} (${n} ficheros)`; });
+      out.className = 'done-box';
+      const base = parent.name || 'la carpeta elegida';
+      out.replaceChildren(...cloneResult({ where: empty ? base : `${base}/${name}`, files: w.files, failed: w.failed, r }));
+      out.hidden = false;
+      btn.textContent = 'Clonado';
+    } catch (e) {
+      out.className = 'err';
+      out.textContent = `${e.message}${e.name === 'NotAllowedError' ? ' (el navegador no ha dado permiso para escribir en esa carpeta)' : ''}`;
+      out.hidden = false;
+      btn.textContent = label;
+      syncCloneBtn();
+    }
+  }
+
+  // .zip para cualquier navegador: lo prepara la app (clon de git completo)
+  async function zipClone() {
+    const btn = $('#cloneBtn');
+    const out = $('#cloneOut');
+    const label = btn.textContent;
+    btn.disabled = true;
+    out.hidden = true;
+    const fixes = $('#fixChk').checked;
+    const name = /^[\w.-]{1,100}$/.test(current.repo.name) && !/^\.+$/.test(current.repo.name) ? current.repo.name : 'repo';
+    try {
+      btn.textContent = fixes ? 'Clonando y aplicando arreglos…' : 'Clonando…';
+      const r = await prepareClone(fixes);
+      const href = `/api/export/${r.token}?formato=zip`;
+      const a = el('a', { href, download: `${name}.zip` });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      out.className = 'done-box';
+      out.replaceChildren(...cloneResult({ where: `${name}.zip`, files: r.files, r, zip: true }));
+      out.hidden = false;
+      btn.textContent = 'Descargado';
+    } catch (e) {
+      out.className = 'err';
+      out.textContent = e.message;
+      out.hidden = false;
+      btn.textContent = label;
+      syncCloneBtn();
+    }
+  }
+
   $('#cloneBtn').addEventListener('click', async () => {
     const btn = $('#cloneBtn');
-    if (current.web) {
-      btn.disabled = true;
-      const out = $('#cloneOut');
-      try {
-        out.className = 'done-box';
-        out.replaceChildren(...await webClone());
-      } catch (e) {
-        out.className = 'err';
-        out.textContent = e && e.code ? `No se pudo descargar el parche (${e.code}).` : e.message;
-      }
-      out.hidden = false;
-      syncCloneBtn();
-      return;
-    }
+    const mode = cloneMode();
+    if (mode === 'pick') return pickAndClone();
+    if (mode === 'zip') return zipClone();
     btn.disabled = true;
     btn.textContent = $('#fixChk').checked ? 'Clonando y aplicando arreglos…' : 'Clonando…';
     const out = $('#cloneOut');
@@ -1273,7 +1606,8 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
         undo.textContent = `${e.message}. Reintentar`;
       }
     });
-    box.append(undo);
+    // En una carpeta elegida en el navegador la app no puede tocar nada: se deshace con git
+    box.append(r.picked ? el('p', { class: 'ai-note' }, 'Para deshacerlos: git checkout -- . dentro de la carpeta.') : undo);
     return box;
   }
 
@@ -1351,6 +1685,8 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
     if (m && !Object.values(DEMO_URLS).includes(url)) { base.repo.owner = m[1]; base.repo.name = m[2].replace(/\.git$/, ''); base.repo.meta.description = `(${base.repo.meta.description}) Resultado simulado de la demo.`; }
     base.id = 'demo-' + kind;
     base.ai = { available: true, ...DEMO_AI[kind].sent };
+    // La misma clasificación que un análisis de verdad (lib/review.js): cuándo te afectaría cada aviso
+    if (window.Ominous && window.Ominous.impactOf) for (const f of [...base.vulnerabilities, ...base.threats]) f.impact = f.impact || window.Ominous.impactOf(f);
     return base;
   }
 
@@ -1390,7 +1726,7 @@ body { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.
           osv: [{ id: 'GHSA-462w-v97r-4m45', aliases: ['CVE-2019-10906'], summary: 'Jinja2 sandbox escape via string formatting', details: 'In Pallets Jinja before 2.10.1, str.format_map allows a sandbox escape.', severity: 'high', fixed: '2.10.1', published: '2019-04-10', url: 'https://osv.dev/vulnerability/GHSA-462w-v97r-4m45', refs: ['https://nvd.nist.gov/vuln/detail/CVE-2019-10906'] },
             { id: 'GHSA-g3rq-g295-4j3m', aliases: ['CVE-2020-28493'], summary: 'Regular Expression Denial of Service in Jinja2', details: 'The ReDoS vulnerability is mainly due to the _punctuation_re regex operator and its use of multiple wildcards. The last wildcard is the most exploitable as it searches for trailing punctuation. This issue can be mitigated by Markdown to format user content instead of the urlize filter.', severity: 'medium', fixed: '2.11.3', published: '2021-03-19', url: 'https://osv.dev/vulnerability/GHSA-g3rq-g295-4j3m', refs: ['https://nvd.nist.gov/vuln/detail/CVE-2020-28493'] }] },
         { kind: 'vuln', rule: 'py-weakhash', severity: 'medium', title: 'Hash débil (MD5/SHA-1)', description: 'No apto para seguridad.', file: 'inventory/auth.py', line: 9, snippet: 'token = hashlib.md5(user.email.encode()).hexdigest()', fixable: true, fix: { text: 'Cambiar a hashlib.sha256 (revisa compatibilidad con hashes guardados).', auto: true } },
-        { kind: 'vuln', rule: 'gha-prt', severity: 'medium', title: 'Workflow con pull_request_target', description: 'Corre con secretos sobre código de forks. Peligroso si hace checkout del PR.', file: '.github/workflows/preview.yml', line: 3, snippet: 'pull_request_target:', fixable: false, notFixableReason: 'Depende del flujo de CI del proyecto; necesita revisión manual.' },
+        { kind: 'vuln', rule: 'gha-prt', severity: 'info', title: 'Workflow con pull_request_target', description: 'No te afecta al clonarlo: se ejecuta en el CI del autor (GitHub Actions), no en tu máquina. Corre con secretos sobre código de forks; peligroso para el autor si hace checkout del PR.', file: '.github/workflows/preview.yml', line: 3, snippet: 'pull_request_target:', fixable: false, notFixableReason: 'Depende del flujo de CI del proyecto; necesita revisión manual.' },
       ],
       threats: [],
     },

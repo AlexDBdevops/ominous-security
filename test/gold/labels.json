@@ -1,0 +1,583 @@
+{
+  "_comment": "Etiquetas de avisos en repos reales. label: real (tiene que salir al menos con 'min') | ruido (no puede pasar de 'max'). file: expresión regular sobre la ruta. kind: threat | vuln. Revisado a mano el 2026-10-13.",
+  "labels": [
+    {
+      "repo": "nickboucher/trojan-source",
+      "kind": "threat",
+      "rule": "trojan-source",
+      "file": ".",
+      "label": "real",
+      "min": "high",
+      "why": "Caracteres bidi que reordenan el código: es el ataque que el repo demuestra."
+    },
+    {
+      "repo": "nickboucher/trojan-source",
+      "kind": "threat",
+      "rule": "homoglyph",
+      "file": ".",
+      "label": "real",
+      "min": "high",
+      "why": "Identificadores con homoglifos."
+    },
+    {
+      "repo": "lodash/lodash",
+      "kind": "threat",
+      "rule": "malicious-package",
+      "file": "package-lock.json",
+      "label": "real",
+      "min": "critical",
+      "why": "fsevents@1.2.2 (MAL-2023-462)."
+    },
+    {
+      "repo": "we45/Vulnerable-Flask-App",
+      "kind": "vuln",
+      "rule": ".",
+      "file": "app/",
+      "label": "real",
+      "min": "high",
+      "why": "Aplicación vulnerable a propósito: tiene que salir alguna vulnerabilidad alta en su código."
+    },
+    {
+      "repo": "hoangsonww/Claude-Code-Agent-Monitor",
+      "kind": "threat",
+      "rule": "ai-agent-config",
+      "file": "^\\.claude/settings\\.json$",
+      "label": "real",
+      "min": "medium",
+      "why": "Preaprueba npm run * para Claude Code: abrirlo con el agente ejecuta scripts del repo sin preguntar."
+    },
+    {
+      "repo": "MadsLorentzen/ai-job-search",
+      "kind": "threat",
+      "rule": "ai-agent-config",
+      "file": "^\\.claude/settings\\.json$",
+      "label": "real",
+      "min": "medium",
+      "why": "Preaprueba bun run para el agente."
+    },
+    {
+      "repo": "date-fns/date-fns",
+      "kind": "threat",
+      "rule": "autoexec",
+      "file": "^(\\.mcp\\.json|\\.vscode/mcp\\.json)$",
+      "label": "real",
+      "min": "medium",
+      "why": "Servidores MCP del proyecto que arranca el agente al abrirlo."
+    },
+    {
+      "repo": "google/gson",
+      "kind": "threat",
+      "rule": "maven-exec",
+      "file": "^pom\\.xml$",
+      "label": "real",
+      "min": "medium",
+      "max": "medium",
+      "why": "antrun ejecuta git al compilar: real pero sin descargas."
+    },
+    {
+      "repo": "hoangsonww/Claude-Code-Agent-Monitor",
+      "kind": "threat",
+      "rule": "persist",
+      "file": ".",
+      "label": "ruido",
+      "max": "low",
+      "why": "Comentarios y textos traducidos que mencionan la clave Run."
+    },
+    {
+      "repo": "hoangsonww/Claude-Code-Agent-Monitor",
+      "kind": "threat",
+      "rule": "steal-keys",
+      "file": "^(client|server)/",
+      "label": "ruido",
+      "max": "low",
+      "why": "Rutas de ejemplo (placeholder, OpenAPI)."
+    },
+    {
+      "repo": "hoangsonww/Claude-Code-Agent-Monitor",
+      "kind": "threat",
+      "rule": "nul-in-source",
+      "file": ".",
+      "label": "ruido",
+      "max": "low",
+      "why": "NUL como separador dentro de una cadena."
+    },
+    {
+      "repo": "hoangsonww/Claude-Code-Agent-Monitor",
+      "kind": "threat",
+      "rule": "autoexec",
+      "file": "^plugins/",
+      "label": "ruido",
+      "max": "low",
+      "why": ".mcp.json de plugins en subcarpetas."
+    },
+    {
+      "repo": "hoangsonww/Claude-Code-Agent-Monitor",
+      "kind": "threat",
+      "rule": "vscode-exec-setting",
+      "file": ".",
+      "label": "ruido",
+      "max": "low",
+      "why": "typescript.tsdk: VS Code pregunta."
+    },
+    {
+      "repo": "hoangsonww/Claude-Code-Agent-Monitor",
+      "kind": "vuln",
+      "rule": "compose-cap-add",
+      "file": ".",
+      "label": "ruido",
+      "max": "info",
+      "why": "Eran cap_drop: - ALL."
+    },
+    {
+      "repo": "hoangsonww/Claude-Code-Agent-Monitor",
+      "kind": "vuln",
+      "rule": "js-exec",
+      "file": ".",
+      "label": "ruido",
+      "max": "info",
+      "why": "db.exec de SQLite."
+    },
+    {
+      "repo": "hoangsonww/Claude-Code-Agent-Monitor",
+      "kind": "vuln",
+      "rule": "ext-gitleaks",
+      "file": ".",
+      "label": "ruido",
+      "max": "low",
+      "why": "Ejemplos de la API; y en todo caso, claves del autor."
+    },
+    {
+      "repo": "ohmyzsh/ohmyzsh",
+      "kind": "threat",
+      "rule": "sudo-hijack",
+      "file": ".",
+      "label": "ruido",
+      "max": "info",
+      "why": "alias sudo='nocorrect sudo'."
+    },
+    {
+      "repo": "ohmyzsh/ohmyzsh",
+      "kind": "threat",
+      "rule": "unicode-tags",
+      "file": "emoji",
+      "label": "ruido",
+      "max": "info",
+      "why": "Banderas de Inglaterra, Escocia y Gales."
+    },
+    {
+      "repo": "ohmyzsh/ohmyzsh",
+      "kind": "threat",
+      "rule": "destructive",
+      "file": ".",
+      "label": "ruido",
+      "max": "low",
+      "why": "rm -rf / dentro de un comentario."
+    },
+    {
+      "repo": "ohmyzsh/ohmyzsh",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "README\\.md$",
+      "label": "ruido",
+      "max": "medium",
+      "why": "Instrucciones de instalación de los plugins: si las copias."
+    },
+    {
+      "repo": "oven-sh/setup-bun",
+      "kind": "threat",
+      "rule": "steal-browser",
+      "file": "^dist/",
+      "label": "ruido",
+      "max": "info",
+      "why": "Palabras sueltas en el bundle de undici."
+    },
+    {
+      "repo": "sharkdp/bat",
+      "kind": "threat",
+      "rule": "destructive",
+      "file": ".",
+      "label": "ruido",
+      "max": "low",
+      "why": "syntax_test_makefile y valores de assert_eq!."
+    },
+    {
+      "repo": "sharkdp/bat",
+      "kind": "threat",
+      "rule": "homoglyph",
+      "file": "syntax_test",
+      "label": "ruido",
+      "max": "low",
+      "why": "Ejemplos de resaltado de sintaxis."
+    },
+    {
+      "repo": "sharkdp/bat",
+      "kind": "threat",
+      "rule": "nul-in-source",
+      "file": ".",
+      "label": "ruido",
+      "max": "info",
+      "why": "PowerShell en UTF-16."
+    },
+    {
+      "repo": "rubocop/rubocop",
+      "kind": "threat",
+      "rule": "nul-in-source",
+      "file": "\\.eps$",
+      "label": "ruido",
+      "max": "info",
+      "why": "Vista previa binaria del EPS."
+    },
+    {
+      "repo": "rust-lang/rustup",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "^tests/",
+      "label": "ruido",
+      "max": "low",
+      "why": "Raw string en un test."
+    },
+    {
+      "repo": "pyenv/pyenv",
+      "kind": "threat",
+      "rule": "shell-rc",
+      "file": "README",
+      "label": "ruido",
+      "max": "low",
+      "why": "Instrucciones del README."
+    },
+    {
+      "repo": "lodash/lodash",
+      "kind": "threat",
+      "rule": "lockfile-host",
+      "file": ".",
+      "label": "ruido",
+      "max": "low",
+      "why": "Registro oficial de npm por http en un lockfile antiguo."
+    },
+    {
+      "repo": "composer/composer",
+      "kind": "threat",
+      "rule": "lockfile-host",
+      "file": ".",
+      "label": "ruido",
+      "max": "low",
+      "why": "Las URL son de financiación (funding: tidelift, opencollective), no de descarga."
+    },
+    {
+      "repo": "nvm-sh/nvm",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "^\\.github/workflows/",
+      "label": "ruido",
+      "max": "low",
+      "why": "Se ejecuta en el CI del autor, no en tu máquina."
+    },
+    {
+      "repo": "rust-lang/rustup",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "^ci/",
+      "label": "ruido",
+      "max": "low",
+      "why": "Script del CI del autor."
+    },
+    {
+      "repo": "encode/httpx",
+      "kind": "threat",
+      "rule": "trojan-source",
+      "file": "^tests/",
+      "label": "ruido",
+      "max": "low",
+      "why": "Datos de prueba de URLs."
+    },
+    {
+      "repo": "python-poetry/poetry",
+      "kind": "threat",
+      "rule": "(pth-exec|archive-exec)",
+      "file": "^tests/",
+      "label": "ruido",
+      "max": "low",
+      "why": "Proyectos de prueba."
+    },
+    {
+      "repo": "cli/cli",
+      "kind": "threat",
+      "rule": "archive-exec",
+      "file": "test/data",
+      "label": "ruido",
+      "max": "low",
+      "why": "Binario de prueba."
+    },
+    {
+      "repo": "we45/Vulnerable-Flask-App",
+      "kind": "threat",
+      "rule": "remote-stage",
+      "file": "loader\\.js$",
+      "label": "ruido",
+      "max": "medium",
+      "why": "Cargador de módulos minificado (RequireJS): cargar y evaluar es su función."
+    },
+    {
+      "repo": "actions/checkout",
+      "kind": "threat",
+      "rule": "long-line",
+      "file": "^dist/",
+      "label": "ruido",
+      "max": "low",
+      "why": "Bundle de ncc, normal en una Action."
+    },
+    {
+      "repo": "laravel/laravel",
+      "kind": "threat",
+      "rule": "long-line",
+      "file": "welcome\\.blade\\.php$",
+      "label": "ruido",
+      "max": "low",
+      "why": "CSS y SVG en línea de la página de bienvenida."
+    },
+    {
+      "repo": "date-fns/date-fns",
+      "kind": "threat",
+      "rule": "devcontainer-host",
+      "file": "devcontainer",
+      "label": "real",
+      "min": "medium",
+      "why": "Al abrir en un devcontainer se ejecuta en tu equipo."
+    },
+    {
+      "repo": "docker/docker-install",
+      "kind": "threat",
+      "rule": "persist",
+      "file": "^install.sh$",
+      "label": "real",
+      "min": "medium",
+      "max": "medium",
+      "why": "El instalador deja Docker como servicio: esperado, pero hay que saberlo."
+    },
+    {
+      "repo": "jekyll/jekyll",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "^.devcontainer/",
+      "label": "real",
+      "min": "medium",
+      "why": "Se ejecuta al construir el devcontainer."
+    },
+    {
+      "repo": "jekyll/jekyll",
+      "kind": "threat",
+      "rule": "symlink-escape",
+      "file": "^test/",
+      "label": "real",
+      "min": "low",
+      "max": "medium",
+      "why": "Enlace que sale del repo, en los tests."
+    },
+    {
+      "repo": "lodash/lodash",
+      "kind": "threat",
+      "rule": "eval-decode",
+      "file": "^vendor/",
+      "label": "ruido",
+      "max": "medium",
+      "why": "Librería antigua copiada (Firebug Lite)."
+    },
+    {
+      "repo": "nickboucher/trojan-source",
+      "kind": "threat",
+      "rule": "zero-width",
+      "file": ".",
+      "label": "real",
+      "min": "medium",
+      "why": "Funciones invisibles: es el ataque que demuestra."
+    },
+    {
+      "repo": "nickboucher/trojan-source",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "^Dockerfile$",
+      "label": "ruido",
+      "max": "medium",
+      "why": "Instalación de herramientas al construir la imagen."
+    },
+    {
+      "repo": "nvm-sh/nvm",
+      "kind": "threat",
+      "rule": "steal-keys",
+      "file": "^nvm.sh$",
+      "label": "ruido",
+      "max": "medium",
+      "why": "Lee la configuración de npm para trabajar."
+    },
+    {
+      "repo": "ohmyzsh/ohmyzsh",
+      "kind": "threat",
+      "rule": "persist",
+      "file": "pow",
+      "label": "real",
+      "min": "medium",
+      "why": "Carga un LaunchAgent (el del plugin pow) cuando lo usas."
+    },
+    {
+      "repo": "ohmyzsh/ohmyzsh",
+      "kind": "threat",
+      "rule": "(steal-keys|ip-recon|exfil-paste)",
+      "file": "^plugins/",
+      "label": "ruido",
+      "max": "medium",
+      "why": "Funciones de plugins que el usuario invoca (kubectl, IP pública, transfer.sh)."
+    },
+    {
+      "repo": "prettier/prettier",
+      "kind": "threat",
+      "rule": "long-line",
+      "file": "^npm:",
+      "label": "ruido",
+      "max": "medium",
+      "why": "Bundle del paquete publicado."
+    },
+    {
+      "repo": "pypa/pip",
+      "kind": "threat",
+      "rule": "steal-keys",
+      "file": "_vendor/",
+      "label": "ruido",
+      "max": "medium",
+      "why": "distlib lee .pypirc para publicar."
+    },
+    {
+      "repo": "rust-lang/rustlings",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "CHANGELOG",
+      "label": "ruido",
+      "max": "medium",
+      "why": "Instrucción en el registro de cambios."
+    },
+    {
+      "repo": "rust-lang/rustup",
+      "kind": "threat",
+      "rule": "autoexec",
+      "file": "^.envrc$",
+      "label": "real",
+      "min": "low",
+      "max": "medium",
+      "why": "direnv lo ejecuta tras direnv allow."
+    },
+    {
+      "repo": "sharkdp/bat",
+      "kind": "threat",
+      "rule": "autoexec",
+      "file": "^.envrc$",
+      "label": "real",
+      "min": "low",
+      "max": "medium",
+      "why": "direnv lo ejecuta tras direnv allow."
+    },
+    {
+      "repo": "rust-lang/rustup",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "^www/",
+      "label": "ruido",
+      "max": "medium",
+      "why": "La orden de instalación que muestra su web."
+    },
+    {
+      "repo": "spf13/cobra",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "^Makefile$",
+      "label": "ruido",
+      "max": "medium",
+      "why": "$(warning …) de make: un mensaje; si lo copias, es como una instrucción del README (media mientras no se pueda descargar el script)."
+    },
+    {
+      "repo": "tj/n",
+      "kind": "threat",
+      "rule": "dep-url",
+      "file": "package.json",
+      "label": "real",
+      "min": "low",
+      "max": "medium",
+      "why": "Dependencias desde una URL."
+    },
+    {
+      "repo": "tj/n",
+      "kind": "threat",
+      "rule": "readme-lure",
+      "file": "README",
+      "label": "real",
+      "min": "low",
+      "max": "medium",
+      "why": "Enlace acortado que lleva al instalador en GitHub."
+    },
+    {
+      "repo": "we45/Vulnerable-Flask-App",
+      "kind": "threat",
+      "rule": "vscode-exec-setting",
+      "file": ".",
+      "label": "real",
+      "min": "medium",
+      "why": "Ajuste de VS Code que apunta a un ejecutable."
+    },
+    {
+      "repo": "hoangsonww/Claude-Code-Agent-Monitor",
+      "kind": "threat",
+      "rule": "steal-keys",
+      "file": "^scripts/run-npm.js$",
+      "label": "ruido",
+      "max": "medium",
+      "why": "Comentario que menciona ~/.npmrc en un script que lanza npm: se queda en media porque el fichero ejecuta comandos."
+    },
+    {
+      "repo": "docker/docker-install",
+      "kind": "threat",
+      "rule": "download-run",
+      "file": "README",
+      "label": "real",
+      "min": "low",
+      "max": "medium",
+      "why": "Instrucción del README: si la copias."
+    },
+    {
+      "repo": "MadsLorentzen/ai-job-search",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "SETUP.md$",
+      "label": "real",
+      "min": "low",
+      "max": "medium",
+      "why": "Instrucción de instalación (TinyTeX)."
+    },
+    {
+      "repo": "pyenv/pyenv",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "README",
+      "label": "real",
+      "min": "low",
+      "max": "medium",
+      "why": "Instalador oficial en el README."
+    },
+    {
+      "repo": "tj/n",
+      "kind": "threat",
+      "rule": "curl-pipe",
+      "file": "README",
+      "label": "real",
+      "min": "low",
+      "max": "medium",
+      "why": "Instalador en el README."
+    },
+    {
+      "repo": "anthropics/anthropic-sdk-python",
+      "kind": "threat",
+      "rule": "homoglyph",
+      "file": "^tests/test_utils/",
+      "label": "ruido",
+      "max": "low",
+      "why": "μ de microsegundos en un comentario al final de la línea."
+    }
+  ]
+}
