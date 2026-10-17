@@ -8,7 +8,7 @@
 # Debian y no Alpine: CodeQL necesita glibc. Debian 13 trae git 2.47.3, ya corregido
 # para los fallos de clonado de 2025 (CVE-2025-48384).
 
-FROM node:22-trixie-slim AS tools
+FROM node:25-trixie-slim AS tools
 ARG GITLEAKS_VERSION=8.30.1
 ARG GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 ARG TRIVY_VERSION=0.74.0
@@ -50,7 +50,7 @@ RUN python3 -m venv /opt/semgrep \
 # memoria de sobra para quedarse sin ella).
 RUN chown -R root:root /opt && chmod -R a+rX,go-w /opt
 
-FROM node:22-trixie-slim
+FROM node:25-trixie-slim
 LABEL org.opencontainers.image.title="Ominous Security (completa)" \
       org.opencontainers.image.description="Analiza repositorios de GitHub antes de clonarlos, con Gitleaks, Semgrep, Trivy y CodeQL" \
       org.opencontainers.image.source="https://github.com/AlexDBdevops/ominous-security" \

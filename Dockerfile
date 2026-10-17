@@ -6,7 +6,7 @@
 # También sirve como escáner en CI:
 #   docker run --rm -v "$PWD:/src:ro" --entrypoint ominous-scan ghcr.io/alexdbdevops/ominous-security /src
 
-FROM node:22-alpine
+FROM node:25-alpine
 LABEL org.opencontainers.image.title="Ominous Security" \
       org.opencontainers.image.description="Analiza repositorios de GitHub antes de clonarlos" \
       org.opencontainers.image.source="https://github.com/AlexDBdevops/ominous-security" \
