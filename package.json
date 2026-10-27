@@ -30,7 +30,7 @@
     "LICENSE"
   ],
   "optionalDependencies": {
-    "@anthropic-ai/sdk": "0.133.0",
+    "@anthropic-ai/sdk": "0.135.0",
     "@babel/parser": "7.29.9"
   },
   "repository": {
